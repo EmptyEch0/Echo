@@ -1,24 +1,105 @@
 // Echo Multi-Platform Web Content Script (WhatsApp, Instagram, Telegram, Discord, X)
-console.log('✨ [Echo Copilot v1.3] Initialized on', window.location.hostname);
+console.log('✨ [Echo Copilot v1.4] Initialized on', window.location.hostname);
 
 let currentIncomingMessage = '';
 let isGenerating = false;
 let isLearningActive = true;
 let isAssistantOpen = false;
 let isPolishModalOpen = false;
+let isOpacityPopoverOpen = false;
+let glassOpacity = 72; // default 72% opacity (28% transparency)
 
-// Helper: Send message to background service worker
+// Helper: Safely send message to background service worker with full lifecycle handling
 function sendToBackground(action: string, payload?: any): Promise<any> {
   return new Promise((resolve) => {
     try {
+      if (
+        typeof chrome === 'undefined' ||
+        !chrome.runtime ||
+        !chrome.runtime.id ||
+        typeof chrome.runtime.sendMessage !== 'function'
+      ) {
+        resolve(null);
+        return;
+      }
       chrome.runtime.sendMessage({ action, payload }, (response) => {
+        if (chrome.runtime?.lastError) {
+          resolve(null);
+          return;
+        }
         resolve(response);
       });
-    } catch (e) {
-      console.warn('[Echo] Communication notice:', e);
+    } catch {
+      // Gracefully resolve on context invalidation without throwing
       resolve(null);
     }
   });
+}
+
+// -------------------------------------------------------------
+// Transparency & Opacity Customization Controller
+// -------------------------------------------------------------
+function applyGlassOpacity(opacityVal: number) {
+  glassOpacity = Math.max(10, Math.min(100, opacityVal));
+  const decimal = (glassOpacity / 100).toFixed(2);
+  
+  // Set root CSS variable for all injected glass elements
+  document.documentElement.style.setProperty('--echo-glass-opacity', decimal);
+
+  // Update all in-page transparency slider input values & percentage labels
+  const sliders = document.querySelectorAll<HTMLInputElement>('.echo-transparency-slider');
+  sliders.forEach((s) => {
+    s.value = String(glassOpacity);
+  });
+  const badges = document.querySelectorAll<HTMLElement>('.echo-opacity-badge');
+  badges.forEach((b) => {
+    b.innerText = `${glassOpacity}%`;
+  });
+
+  // Save to Chrome Storage and localStorage fallback
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      chrome.storage.local.set({ echo_glass_opacity: glassOpacity });
+    }
+    localStorage.setItem('echo_glass_opacity', String(glassOpacity));
+  } catch {
+    // Ignore storage errors in restricted contexts
+  }
+}
+
+function initGlassOpacity() {
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      chrome.storage.local.get(['echo_glass_opacity'], (res) => {
+        if (res && res.echo_glass_opacity) {
+          applyGlassOpacity(Number(res.echo_glass_opacity));
+        } else {
+          const localVal = localStorage.getItem('echo_glass_opacity');
+          if (localVal) applyGlassOpacity(Number(localVal));
+          else applyGlassOpacity(72);
+        }
+      });
+    } else {
+      const localVal = localStorage.getItem('echo_glass_opacity');
+      if (localVal) applyGlassOpacity(Number(localVal));
+      else applyGlassOpacity(72);
+    }
+  } catch {
+    applyGlassOpacity(72);
+  }
+
+  // Real-time synchronization when opacity is adjusted in the popup or other views
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage?.onChanged) {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local' && changes.echo_glass_opacity) {
+          applyGlassOpacity(Number(changes.echo_glass_opacity.newValue));
+        }
+      });
+    }
+  } catch {
+    // Ignore
+  }
 }
 
 function getPlatformName(): string {
@@ -54,7 +135,7 @@ function extractActiveContactName(): string {
       const titleEl = document.querySelector('div[data-testid="Conversation-Header"] span, div[data-testid="detailHeader"] span');
       if (titleEl) return (titleEl as HTMLElement).innerText || '';
     }
-  } catch (e) {
+  } catch {
     // Fail silently without affecting host site
   }
   return '';
@@ -91,7 +172,7 @@ function extractConversationContext(): { sender: string; text: string }[] {
         const textNodes = row.querySelectorAll('span[dir="auto"], div[dir="auto"]');
         for (const tn of Array.from(textNodes)) {
           const text = tn.textContent?.trim() || (tn as HTMLElement)?.innerText?.trim() || '';
-          if (text && text.length > 0 && !text.includes('Seen') && !text.includes('Active') && !text.startsWith('📷') && !text.startsWith('🎤')) {
+          if (text && text.length > 0 && !text.includes('Seen') && !text.includes('Active') && !text.includes('Attachment') && !text.startsWith('📷') && !text.startsWith('🎤')) {
             messages.push({ sender: isOut ? 'me' : 'them', text });
             break;
           }
@@ -119,8 +200,8 @@ function extractConversationContext(): { sender: string; text: string }[] {
         }
       }
     }
-  } catch (e) {
-    console.warn('[Echo] Context extraction notice:', e);
+  } catch {
+    // Context extraction error ignored
   }
   return messages;
 }
@@ -170,7 +251,7 @@ function extractLatestIncomingMessage(): string {
         return nodes[nodes.length - 1].textContent?.trim() || '';
       }
     }
-  } catch (e) {
+  } catch {
     // Fail silently without affecting host site
   }
   return '';
@@ -252,7 +333,7 @@ function fillTextInput(text: string) {
         selection?.addRange(range);
         document.execCommand('selectAll', false, undefined);
         document.execCommand('insertText', false, text);
-      } catch (e) {
+      } catch {
         targetEl.innerText = text;
       }
 
@@ -269,7 +350,7 @@ function fillTextInput(text: string) {
           if (props?.onInput) props.onInput({ target: inputContainer, currentTarget: inputContainer });
           if (props?.onChange) props.onChange({ target: inputContainer, currentTarget: inputContainer });
         }
-      } catch (e) {
+      } catch {
         // Ignore react internal error
       }
     }
@@ -284,13 +365,11 @@ function findFooterNode(): HTMLElement | null {
     if (f) return f as HTMLElement;
   }
   if (platform === 'instagram') {
-    // Look for outer composer wrapper so bar sits above the rounded input box, NOT inside it
     const footer = document.querySelector('div[role="main"] footer');
     if (footer) return footer as HTMLElement;
 
     const input = document.querySelector('div[contenteditable="true"][role="textbox"], textarea[placeholder*="Message"], div[role="textbox"]');
     if (input) {
-      // Traverse up to find the outer full-width composer bar
       let curr = input.parentElement;
       while (curr && curr.parentElement && curr !== document.body) {
         if (curr.classList.contains('x1n2onr6') || curr.getAttribute('role') === 'main' || curr.clientWidth > 400) {
@@ -346,7 +425,15 @@ function openPolishModal(initialText?: string) {
               <p>Powered by NVIDIA Llama & Own Mind NLP</p>
             </div>
           </div>
-          <button id="echo-polish-close" class="echo-btn-close">✕</button>
+          <div class="echo-header-controls">
+            <!-- Glass Opacity Quick Slider -->
+            <div class="echo-opacity-control" title="Adjust Glass Transparency">
+              <span class="echo-opacity-icon">💧</span>
+              <input type="range" min="10" max="100" value="${glassOpacity}" class="echo-transparency-slider" />
+              <span class="echo-opacity-badge">${glassOpacity}%</span>
+            </div>
+            <button id="echo-polish-close" class="echo-btn-close">✕</button>
+          </div>
         </div>
 
         <div class="echo-polish-body">
@@ -388,6 +475,13 @@ function openPolishModal(initialText?: string) {
     document.getElementById('echo-polish-close')?.addEventListener('click', () => {
       modal!.style.display = 'none';
       isPolishModalOpen = false;
+    });
+
+    // Opacity slider event listener in modal
+    const modalSlider = modal.querySelector<HTMLInputElement>('.echo-transparency-slider');
+    modalSlider?.addEventListener('input', (e) => {
+      const val = Number((e.target as HTMLInputElement).value);
+      applyGlassOpacity(val);
     });
 
     // Pill selection handler
@@ -496,9 +590,16 @@ function toggleAssistantDrawer() {
       <div class="echo-drawer-header">
         <div class="echo-header-title">
           <span class="echo-glow-icon">🤖</span>
-          <span>Echo Copilot (NVIDIA Llama)</span>
+          <span>Echo Copilot (Llama 3.2)</span>
         </div>
-        <button id="echo-drawer-close" class="echo-btn-close">✕</button>
+        <div class="echo-header-controls">
+          <div class="echo-opacity-control" title="Adjust Glass Transparency">
+            <span class="echo-opacity-icon">💧</span>
+            <input type="range" min="10" max="100" value="${glassOpacity}" class="echo-transparency-slider" />
+            <span class="echo-opacity-badge">${glassOpacity}%</span>
+          </div>
+          <button id="echo-drawer-close" class="echo-btn-close">✕</button>
+        </div>
       </div>
       
       <!-- Persona Onboarding Quiz Section -->
@@ -544,6 +645,12 @@ function toggleAssistantDrawer() {
     document.getElementById('echo-drawer-close')?.addEventListener('click', () => {
       drawer!.style.display = 'none';
       isAssistantOpen = false;
+    });
+
+    const drawerSlider = drawer.querySelector<HTMLInputElement>('.echo-transparency-slider');
+    drawerSlider?.addEventListener('input', (e) => {
+      const val = Number((e.target as HTMLInputElement).value);
+      applyGlassOpacity(val);
     });
 
     // Handle Quiz Submission
@@ -618,7 +725,59 @@ function toggleAssistantDrawer() {
   }
 }
 
-// Inject Floating Echo Glassmorphic Bar
+// Toggle In-Bar Transparency Adjuster Popover
+function toggleOpacityPopover() {
+  let popover = document.getElementById('echo-opacity-popover');
+  if (!popover) {
+    popover = document.createElement('div');
+    popover.id = 'echo-opacity-popover';
+    popover.className = 'echo-glass-popover';
+    popover.innerHTML = `
+      <div class="echo-popover-header">
+        <span>✨ Glass Transparency</span>
+        <span class="echo-opacity-badge">${glassOpacity}%</span>
+      </div>
+      <div class="echo-popover-slider-row">
+        <span style="font-size: 11px;">10%</span>
+        <input type="range" min="10" max="100" value="${glassOpacity}" class="echo-transparency-slider echo-popover-slider" />
+        <span style="font-size: 11px;">100%</span>
+      </div>
+      <div class="echo-popover-presets">
+        <button class="echo-preset-pill" data-val="35">Crystal (35%)</button>
+        <button class="echo-preset-pill" data-val="65">Frosted (65%)</button>
+        <button class="echo-preset-pill" data-val="88">Milky (88%)</button>
+      </div>
+    `;
+
+    const bar = document.getElementById('echo-ai-bar');
+    if (bar) {
+      bar.appendChild(popover);
+    } else {
+      document.body.appendChild(popover);
+    }
+
+    const slider = popover.querySelector<HTMLInputElement>('.echo-transparency-slider');
+    slider?.addEventListener('input', (e) => {
+      const val = Number((e.target as HTMLInputElement).value);
+      applyGlassOpacity(val);
+    });
+
+    const presetBtns = popover.querySelectorAll<HTMLElement>('.echo-preset-pill');
+    presetBtns.forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const val = Number((e.currentTarget as HTMLElement).getAttribute('data-val') || '72');
+        applyGlassOpacity(val);
+      });
+    });
+
+    isOpacityPopoverOpen = true;
+  } else {
+    isOpacityPopoverOpen = !isOpacityPopoverOpen;
+    popover.style.display = isOpacityPopoverOpen ? 'block' : 'none';
+  }
+}
+
+// Inject Floating Echo Luminous Frosted Glassmorphic Bar
 function injectEchoBar() {
   const footerNode = findFooterNode();
   if (!footerNode) return;
@@ -629,9 +788,9 @@ function injectEchoBar() {
     bar.id = 'echo-ai-bar';
     bar.className = 'echo-glass-bar';
     bar.innerHTML = `
-      <div class="echo-bar-brand" title="Echo Copilot • Powered by NVIDIA Llama & Own Mind NLP">
+      <div class="echo-bar-brand" title="Echo Copilot • Frosted White Glassmorphism">
         <div class="echo-brand-glow">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
             <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
             <line x1="12" y1="19" x2="12" y2="22"/>
@@ -650,14 +809,21 @@ function injectEchoBar() {
         <button type="button" class="echo-btn-pill echo-btn-polish" id="echo-polish-btn" title="Fix grammar & upgrade vocabulary in your draft message">
           🪄 Polish
         </button>
-        <button type="button" class="echo-btn-pill" id="echo-assistant-btn" title="Open Echo Copilot Drawer">
+        <button type="button" class="echo-btn-pill" id="echo-assistant-btn" title="Open Echo Copilot Assistant">
           🤖 Copilot
+        </button>
+        <button type="button" class="echo-btn-icon" id="echo-opacity-btn" title="Adjust Glass Transparency (10% - 100%)">
+          💧
         </button>
         <button type="button" class="echo-btn-icon ${isLearningActive ? 'active' : 'inactive'}" id="echo-incognito-btn" title="Toggle Passive Persona Learning">
           ${isLearningActive ? '🛡️' : '🙈'}
         </button>
         <button type="button" class="echo-btn-icon echo-btn-refresh" id="echo-refresh-btn" title="Retry / Generate fresh ideas for the active message">
-          🔄
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
         </button>
       </div>
     `;
@@ -668,6 +834,7 @@ function injectEchoBar() {
       const refreshBtn = target.closest('#echo-refresh-btn');
       const polishBtn = target.closest('#echo-polish-btn');
       const assistantBtn = target.closest('#echo-assistant-btn');
+      const opacityBtn = target.closest('#echo-opacity-btn');
       const incognitoBtn = target.closest('#echo-incognito-btn');
 
       if (refreshBtn) {
@@ -682,6 +849,10 @@ function injectEchoBar() {
         e.preventDefault();
         e.stopPropagation();
         toggleAssistantDrawer();
+      } else if (opacityBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleOpacityPopover();
       } else if (incognitoBtn) {
         e.preventDefault();
         e.stopPropagation();
@@ -840,8 +1011,8 @@ function debouncedScan() {
     try {
       injectEchoBar();
       triggerReplyGeneration();
-    } catch (e) {
-      console.warn('✨ [Echo] Scan notice:', e);
+    } catch {
+      // Ignored
     }
   }, 400);
 }
@@ -862,12 +1033,13 @@ function initObserver() {
 }
 
 // Run Initialization
+initGlassOpacity();
 setTimeout(() => {
   try {
     injectEchoBar();
     setupSentMessageListener();
     initObserver();
-  } catch (e) {
-    console.warn('✨ [Echo] Init notice:', e);
+  } catch {
+    // Ignored
   }
 }, 1000);
