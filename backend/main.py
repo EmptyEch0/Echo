@@ -133,8 +133,8 @@ def suggest_replies(req: SuggestRequest):
     if not incoming:
         raise HTTPException(status_code=400, detail="Incoming message cannot be empty")
         
-    # Tier 0: Check 0-latency instant templates only if not a forced retry
-    if not req.is_retry:
+    # Tier 0: Check 0-latency instant templates only if not a forced retry AND formality is casual/neutral
+    if not req.is_retry and (req.formality in [None, "", "neutral", "casual"]):
         instant_matches = style_engine.get_instant_templates(incoming)
         if instant_matches:
             return {

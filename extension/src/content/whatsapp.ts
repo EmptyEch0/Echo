@@ -243,6 +243,22 @@ function extractActiveContactName(): string {
   return '';
 }
 
+// Check if extracted DOM text represents an authentic chat message (filters out UI labels, time, seen status)
+function isValidChatBubbleText(text: string): boolean {
+  if (!text || text.length === 0 || text.length > 800) return false;
+  const lower = text.toLowerCase();
+  if (text.startsWith('📷') || text.startsWith('🎤') || text.startsWith('📹') || text.startsWith('🖼️') || text.startsWith('📎')) return false;
+  const uiMeta = [
+    'active now', 'active today', 'active yesterday', 'seen by', 'seen', 'delivered',
+    'double tap to like', 'replying to', 'voice message', 'audio call', 'video call',
+    'search', 'messages', 'type a message', 'write a message', 'status update',
+    'forwarded', 'pinned a message', 'today', 'yesterday'
+  ];
+  if (uiMeta.some(m => lower === m || (lower.length < 30 && lower.startsWith(m)))) return false;
+  if (/^\d{1,2}:\d{2}\s*(am|pm)?$/i.test(text) || /^\d{1,2}[hmd]$/i.test(text)) return false;
+  return true;
+}
+
 // Extract recent multi-turn conversation context (dialogue history)
 function extractConversationContext(): { sender: string; text: string }[] {
   const messages: { sender: string; text: string }[] = [];
@@ -255,9 +271,9 @@ function extractConversationContext(): { sender: string; text: string }[] {
         const recentRows = Array.from(msgRows).slice(-10);
         for (const row of recentRows) {
           const isOut = row.classList.contains('message-out') || (row.getAttribute('data-id') || '').includes('true_');
-          const textEl = row.querySelector('.copyable-text, .selectable-text, span.selectable-text');
+          const textEl = row.querySelector('.copyable-text, .selectable-text, span.selectable-text, span[dir="ltr"], span[dir="auto"]');
           const text = textEl?.textContent?.trim() || (textEl as HTMLElement)?.innerText?.trim() || '';
-          if (text && text.length > 0 && !text.startsWith('📷') && !text.startsWith('🎤') && !text.startsWith('📹')) {
+          if (isValidChatBubbleText(text)) {
             messages.push({
               sender: isOut ? 'me' : 'them',
               text: text
@@ -267,18 +283,41 @@ function extractConversationContext(): { sender: string; text: string }[] {
       }
     } else if (platform === 'instagram') {
       const rows = document.querySelectorAll('div[role="row"], div[role="listitem"], div[data-testid="message-content"]');
-      const recentRows = Array.from(rows).slice(-12);
+      const recentRows = Array.from(rows).slice(-14);
       for (const row of recentRows) {
         const aria = (row.getAttribute('aria-label') || '').toLowerCase();
-        const isOut = aria.includes('you') || aria.includes('sent');
+        const isOut = aria.includes('you sent') || aria.includes('you:') || aria.includes('sent by you');
         const textNodes = row.querySelectorAll('span[dir="auto"], div[dir="auto"]');
         for (const tn of Array.from(textNodes)) {
           const text = tn.textContent?.trim() || (tn as HTMLElement)?.innerText?.trim() || '';
-          if (text && text.length > 0 && !text.includes('Seen') && !text.includes('Active') && !text.includes('Attachment') && !text.startsWith('📷') && !text.startsWith('🎤')) {
+          if (isValidChatBubbleText(text)) {
             messages.push({ sender: isOut ? 'me' : 'them', text });
             break;
           }
         }
+      }
+
+      // Fallback: search direct messaging container text nodes if rows were empty
+      if (messages.length === 0) {
+        const mainChat = document.querySelector('div[role="main"], section[class*="direct"], div[aria-label*="Direct"], div[aria-label*="Conversation"]') || document.body;
+        const allTextNodes = mainChat.querySelectorAll('span[dir="auto"], div[dir="auto"]');
+        allTextNodes.forEach((tn) => {
+          if (tn.closest('#echo-ai-bar, #echo-polish-modal, #echo-summary-modal, footer, [contenteditable="true"], button, [role="button"], [role="textbox"], header, nav')) return;
+          const text = tn.textContent?.trim() || (tn as HTMLElement)?.innerText?.trim() || '';
+          if (isValidChatBubbleText(text)) {
+            let isMe = false;
+            let p = tn.parentElement;
+            for (let s = 0; s < 5 && p; s++) {
+              const pAria = (p.getAttribute('aria-label') || '').toLowerCase();
+              if (pAria.includes('you sent') || pAria.includes('you:') || pAria.includes('sent by you')) {
+                isMe = true;
+                break;
+              }
+              p = p.parentElement;
+            }
+            messages.push({ sender: isMe ? 'me' : 'them', text });
+          }
+        });
       }
     } else if (platform === 'telegram') {
       const rows = document.querySelectorAll('.message, .message-content');
@@ -287,7 +326,7 @@ function extractConversationContext(): { sender: string; text: string }[] {
         const isOut = row.classList.contains('own') || row.classList.contains('is-out');
         const textNode = row.querySelector('.text-content, .message-text');
         const text = textNode?.textContent?.trim() || (textNode as HTMLElement)?.innerText?.trim() || '';
-        if (text) {
+        if (isValidChatBubbleText(text)) {
           messages.push({ sender: isOut ? 'me' : 'them', text });
         }
       }
@@ -297,7 +336,7 @@ function extractConversationContext(): { sender: string; text: string }[] {
       for (const row of recentRows) {
         const textNode = row.querySelector('div[class*="messageContent"]');
         const text = textNode?.textContent?.trim() || (textNode as HTMLElement)?.innerText?.trim() || '';
-        if (text) {
+        if (isValidChatBubbleText(text)) {
           messages.push({ sender: 'them', text });
         }
       }
@@ -305,7 +344,7 @@ function extractConversationContext(): { sender: string; text: string }[] {
   } catch {
     // Context extraction error ignored
   }
-  return messages;
+  return messages.slice(-10);
 }
 
 // Extract latest incoming message across platforms
@@ -313,26 +352,51 @@ function extractLatestIncomingMessage(): string {
   try {
     const platform = getPlatformName();
     if (platform === 'whatsapp') {
-      const nodes = document.querySelectorAll('.message-in .copyable-text, [data-id*="false_"] .selectable-text, div.message-in span.selectable-text');
+      const nodes = document.querySelectorAll('.message-in .copyable-text, [data-id*="false_"] .selectable-text, div.message-in span.selectable-text, div.message-in span[dir="ltr"], div.message-in span[dir="auto"]');
       if (nodes.length > 0) {
         for (let i = nodes.length - 1; i >= 0; i--) {
           const text = nodes[i].textContent?.trim() || (nodes[i] as HTMLElement).innerText?.trim() || '';
-          if (text && !text.startsWith('📷') && !text.startsWith('🎤') && !text.startsWith('📹')) {
+          if (isValidChatBubbleText(text)) {
             return text;
           }
         }
       }
     } else if (platform === 'instagram') {
-      const rows = document.querySelectorAll('div[role="row"], div[role="listitem"]');
+      // 1. Check message rows
+      const rows = document.querySelectorAll('div[role="row"], div[role="listitem"], div[data-testid="message-content"]');
       for (let i = rows.length - 1; i >= 0; i--) {
         const row = rows[i] as HTMLElement;
         const aria = (row.getAttribute('aria-label') || '').toLowerCase();
-        if (aria.includes('you') || aria.includes('sent')) continue;
-        
-        const textNodes = row.querySelectorAll('span[dir="auto"], div[dir="auto"], div[aria-label]');
+        if (aria.includes('you sent') || aria.includes('you:') || aria.includes('sent by you')) continue;
+
+        const textNodes = row.querySelectorAll('span[dir="auto"], div[dir="auto"]');
         for (const tn of Array.from(textNodes)) {
           const text = tn.textContent?.trim() || (tn as HTMLElement)?.innerText?.trim() || '';
-          if (text && text.length > 0 && !text.includes('Seen') && !text.includes('Active') && !text.includes('Attachment') && !text.startsWith('📷') && !text.startsWith('🎤')) {
+          if (isValidChatBubbleText(text)) {
+            return text;
+          }
+        }
+      }
+
+      // 2. Fallback: inspect direct message area text nodes
+      const mainChat = document.querySelector('div[role="main"], section[class*="direct"], div[aria-label*="Direct"], div[aria-label*="Conversation"]') || document.body;
+      const allTextNodes = mainChat.querySelectorAll('span[dir="auto"], div[dir="auto"]');
+      for (let i = allTextNodes.length - 1; i >= 0; i--) {
+        const tn = allTextNodes[i];
+        if (tn.closest('#echo-ai-bar, #echo-polish-modal, #echo-summary-modal, footer, [contenteditable="true"], textarea, button, header, nav')) continue;
+        const text = tn.textContent?.trim() || (tn as HTMLElement)?.innerText?.trim() || '';
+        if (isValidChatBubbleText(text)) {
+          let isMe = false;
+          let p = tn.parentElement;
+          for (let s = 0; s < 5 && p; s++) {
+            const pAria = (p.getAttribute('aria-label') || '').toLowerCase();
+            if (pAria.includes('you sent') || pAria.includes('you:') || pAria.includes('sent by you')) {
+              isMe = true;
+              break;
+            }
+            p = p.parentElement;
+          }
+          if (!isMe) {
             return text;
           }
         }
@@ -1222,7 +1286,12 @@ function injectEchoBar() {
     bar.id = 'echo-ai-bar';
     bar.className = `echo-glass-bar ${isBarFolded ? 'echo-folded' : ''} ${isCustomPosition ? 'echo-custom-pos' : ''}`;
     bar.innerHTML = `
-      <div class="echo-bar-brand" id="echo-drag-handle" title="Drag to move Echo anywhere on screen • Click to Fold/Unfold (Alt+M)">
+      <!-- Left Controls: Fold / Minimize Button -->
+      <button type="button" class="echo-btn-icon echo-btn-fold" id="echo-fold-btn" title="Fold / Minimize Echo Bar (Alt+M)">
+        ${isBarFolded ? '⤢' : '⟨—⟩'}
+      </button>
+
+      <div class="echo-bar-brand" id="echo-drag-handle" title="Drag to move Echo anywhere on screen (Alt+M to fold)">
         <span class="echo-grip-icon" title="Drag Handle">⠿</span>
         <div class="echo-brand-glow">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
@@ -1232,6 +1301,7 @@ function injectEchoBar() {
           </svg>
         </div>
         <span class="echo-brand-name">Echo</span>
+        <span class="echo-status-dot online" id="echo-status-dot" title="Echo Copilot Active & Connected"></span>
         <span class="echo-folded-label">⚡ Suggestions</span>
       </div>
 
@@ -1274,10 +1344,6 @@ function injectEchoBar() {
             <polyline points="1 20 1 14 7 14"></polyline>
             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
           </svg>
-        </button>
-        <!-- Fold / Minimize Button -->
-        <button type="button" class="echo-btn-icon echo-btn-fold" id="echo-fold-btn" title="Fold / Minimize Echo Bar (Alt+M)">
-          ${isBarFolded ? '⤢' : '⟨—⟩'}
         </button>
         <!-- Dock / Snap to Input Button -->
         <button type="button" class="echo-btn-icon echo-btn-dock" id="echo-dock-btn" title="Snap / Dock to Chat Input">
@@ -1499,6 +1565,25 @@ function renderSuggestions(suggestions: any[]) {
   });
 }
 
+// Live Backend & Ollama Connection Status Dot Updater
+function updateBackendStatusDot() {
+  sendToBackground('GET_HEALTH').then((res: any) => {
+    const dot = document.getElementById('echo-status-dot');
+    if (!dot) return;
+    if (res?.success && res.data) {
+      const activeModel = res.data.active_model || 'Echo AI';
+      const isOllama = res.data.ollama?.status === 'online';
+      dot.className = isOllama ? 'echo-status-dot online' : 'echo-status-dot cloud';
+      dot.title = isOllama
+        ? `🟢 Connected: Local Ollama (${activeModel}) & FastAPI Backend Active`
+        : `🔵 Connected: Cloud AI & Fast NLP Active (${activeModel})`;
+    } else {
+      dot.className = 'echo-status-dot local';
+      dot.title = `⚡ Echo Local Fast NLP Active`;
+    }
+  }).catch(() => {});
+}
+
 // Trigger Reply Generation & Smart Retry
 async function triggerReplyGeneration(force = false) {
   const latestIncoming = extractLatestIncomingMessage();
@@ -1511,7 +1596,21 @@ async function triggerReplyGeneration(force = false) {
     updateActiveContactTone(contactName);
   }
 
-  const queryMessage = latestIncoming || (currentDraft ? `Regarding: ${currentDraft}` : "hey what's up?");
+  let queryMessage = latestIncoming;
+  if (!queryMessage && conversationHistory.length > 0) {
+    for (let i = conversationHistory.length - 1; i >= 0; i--) {
+      if (conversationHistory[i].sender === 'them' && conversationHistory[i].text) {
+        queryMessage = conversationHistory[i].text;
+        break;
+      }
+    }
+  }
+  if (!queryMessage && currentDraft) {
+    queryMessage = `Regarding: ${currentDraft}`;
+  }
+  if (!queryMessage) {
+    queryMessage = "hey what's up?";
+  }
 
   if (queryMessage === currentIncomingMessage && !force && !isGenerating) {
     return;
@@ -1542,11 +1641,32 @@ async function triggerReplyGeneration(force = false) {
   if (response && response.success && response.data?.suggestions && response.data.suggestions.length > 0) {
     renderSuggestions(response.data.suggestions);
   } else {
-    renderSuggestions([
-      { text: 'hey! sounds good 👍', confidence: 'medium', reason: 'Context-aligned reply' },
-      { text: 'sure, let me check and get back to you', confidence: 'medium', reason: 'Context-aligned reply' },
-      { text: 'haha awesome!', confidence: 'medium', reason: 'Context-aligned reply' }
-    ]);
+    // Tone-distinct fallback if AI connection is offline
+    if (activeTone === 'formal') {
+      renderSuggestions([
+        { text: 'Thank you, understood.', confidence: 'medium', reason: 'Formal acknowledgement' },
+        { text: 'I will review and get back to you shortly.', confidence: 'medium', reason: 'Professional follow-up' },
+        { text: 'Please let me know if you need anything else.', confidence: 'medium', reason: 'Professional assistance' }
+      ]);
+    } else if (activeTone === 'concise') {
+      renderSuggestions([
+        { text: 'Got it.', confidence: 'medium', reason: 'Concise acknowledgement' },
+        { text: 'Sounds good 👍', confidence: 'medium', reason: 'Concise agreement' },
+        { text: 'On it now.', confidence: 'medium', reason: 'Concise action' }
+      ]);
+    } else if (activeTone === 'genz') {
+      renderSuggestions([
+        { text: 'bet fr', confidence: 'medium', reason: 'Gen-Z confirmation' },
+        { text: 'no cap sounds good 🔥', confidence: 'medium', reason: 'Gen-Z agreement' },
+        { text: 'w let\'s do it', confidence: 'medium', reason: 'Gen-Z hype' }
+      ]);
+    } else {
+      renderSuggestions([
+        { text: 'sounds good! 👍', confidence: 'medium', reason: 'Casual agreement' },
+        { text: 'sure thing, let me check!', confidence: 'medium', reason: 'Casual acknowledgement' },
+        { text: 'haha awesome!', confidence: 'medium', reason: 'Casual reaction' }
+      ]);
+    }
   }
 }
 
@@ -1775,11 +1895,14 @@ initGlassOpacity();
 setTimeout(() => {
   try {
     injectEchoBar();
+    updateBackendStatusDot();
     setupKeyboardShortcuts();
     setupSlashAndGhostListeners();
     setupSentMessageListener();
     initObserver();
+    setInterval(updateBackendStatusDot, 15000);
   } catch {
     // Ignored
   }
 }, 1000);
+

@@ -359,7 +359,7 @@ function findSimilarMemoryReplies(incoming: string, learned: string[]): string[]
   return scored.filter(s => s.score > 0).map(s => s.msg).slice(0, 2);
 }
 
-function generateOwnMindSuggestions(incoming: string, profile: StyleProfile, learned: string[], _contactName?: string): any[] {
+function generateOwnMindSuggestions(incoming: string, profile: StyleProfile, learned: string[], _contactName?: string, formality: string = 'casual'): any[] {
   const intent = analyzeIntent(incoming);
   const matchedPast = findSimilarMemoryReplies(incoming, learned);
   
@@ -368,38 +368,95 @@ function generateOwnMindSuggestions(incoming: string, profile: StyleProfile, lea
   const secondEmoji = profile.top_emojis?.[1]?.emoji || '🔥';
   const isLowercase = (profile.punctuation_habits?.lowercase_only || 0) > 3;
 
-  const adapt = (str: string) => isLowercase ? str.toLowerCase() : str;
+  const adapt = (str: string) => (isLowercase && formality !== 'formal') ? str.toLowerCase() : str;
 
   const options: { text: string; confidence: 'high' | 'medium' | 'learning'; reason: string }[] = [];
 
-  if (matchedPast.length > 0) {
-    options.push({
-      text: adapt(matchedPast[0]),
-      confidence: 'high',
-      reason: `Matched learned memory corpus: "${matchedPast[0]}"`
-    });
-  }
-
-  if (intent === 'greeting') {
-    options.push({ text: adapt(`${topGreeting}! how's it going? ${topEmoji}`), confidence: 'high', reason: 'Own Mind NLP: Friendly greeting matching your persona' });
-    options.push({ text: adapt(`yo! what's up?`), confidence: 'medium', reason: 'Own Mind NLP: Casual greeting' });
-    options.push({ text: adapt(`hey there! hope all is well ${secondEmoji}`), confidence: 'medium', reason: 'Own Mind NLP: Warm greeting' });
-  } else if (intent === 'scheduling_question') {
-    options.push({ text: adapt(`yeah sounds good! let's do it ${topEmoji}`), confidence: 'high', reason: 'Own Mind NLP: Scheduling affirmation' });
-    options.push({ text: adapt(`let me check my schedule and ping you in a bit`), confidence: 'medium', reason: 'Own Mind NLP: Thoughtful scheduling' });
-    options.push({ text: adapt(`sure! what time works best for you?`), confidence: 'medium', reason: 'Own Mind NLP: Direct coordination' });
-  } else if (intent === 'gratitude') {
-    options.push({ text: adapt(`anytime! glad to help ${topEmoji}`), confidence: 'high', reason: 'Own Mind NLP: Natural gratitude response' });
-    options.push({ text: adapt(`no worries at all!`), confidence: 'medium', reason: 'Own Mind NLP: Relaxed response' });
-    options.push({ text: adapt(`you got it ${secondEmoji}`), confidence: 'medium', reason: 'Own Mind NLP: Upbeat response' });
-  } else if (intent === 'status_inquiry') {
-    options.push({ text: adapt(`yes, taking a look right now! ${topEmoji}`), confidence: 'high', reason: 'Own Mind NLP: Status acknowledgement' });
-    options.push({ text: adapt(`on it, will update you shortly`), confidence: 'medium', reason: 'Own Mind NLP: Direct response' });
-    options.push({ text: adapt(`checked it, looks great! ${secondEmoji}`), confidence: 'medium', reason: 'Own Mind NLP: Positive confirmation' });
+  if (formality === 'formal') {
+    if (intent === 'greeting') {
+      options.push({ text: `Hello! Hope you are having a productive day.`, confidence: 'high', reason: 'Formal professional greeting' });
+      options.push({ text: `Good day! Thank you for reaching out.`, confidence: 'high', reason: 'Polite business greeting' });
+      options.push({ text: `Greetings, how may I assist you today?`, confidence: 'medium', reason: 'Articulate professional opening' });
+    } else if (intent === 'scheduling_question') {
+      options.push({ text: `Yes, that proposed time works well for me.`, confidence: 'high', reason: 'Formal confirmation' });
+      options.push({ text: `Let me consult my calendar and follow up shortly.`, confidence: 'high', reason: 'Professional coordination' });
+      options.push({ text: `Could you please suggest an alternate time slot?`, confidence: 'medium', reason: 'Polite rescheduling request' });
+    } else if (intent === 'gratitude') {
+      options.push({ text: `You are very welcome, glad to assist.`, confidence: 'high', reason: 'Formal gratitude acknowledgement' });
+      options.push({ text: `Happy to help anytime.`, confidence: 'high', reason: 'Professional closing' });
+      options.push({ text: `Thank you as well for your collaboration.`, confidence: 'medium', reason: 'Business courtesy' });
+    } else {
+      options.push({ text: `Understood, let us proceed as discussed.`, confidence: 'high', reason: 'Formal agreement' });
+      options.push({ text: `Thank you for the update, will review and reply soon.`, confidence: 'high', reason: 'Professional acknowledgement' });
+      options.push({ text: `Sounds agreeable to me, thank you.`, confidence: 'medium', reason: 'Formal concurrence' });
+    }
+  } else if (formality === 'concise') {
+    if (intent === 'greeting') {
+      options.push({ text: `Hey! What's up?`, confidence: 'high', reason: 'Concise direct greeting' });
+      options.push({ text: `Morning!`, confidence: 'high', reason: 'Short greeting' });
+      options.push({ text: `Hey 👍`, confidence: 'medium', reason: 'Minimal greeting' });
+    } else if (intent === 'scheduling_question') {
+      options.push({ text: `Sounds good 👍`, confidence: 'high', reason: 'Punchy agreement' });
+      options.push({ text: `Free then.`, confidence: 'high', reason: 'Direct confirmation' });
+      options.push({ text: `Let's do it.`, confidence: 'medium', reason: 'Short scheduling' });
+    } else if (intent === 'gratitude') {
+      options.push({ text: `Anytime 👍`, confidence: 'high', reason: 'Short gratitude' });
+      options.push({ text: `No problem.`, confidence: 'high', reason: 'Direct response' });
+      options.push({ text: `You got it.`, confidence: 'medium', reason: 'Punchy response' });
+    } else {
+      options.push({ text: `Got it 👍`, confidence: 'high', reason: 'Punchy acknowledgement' });
+      options.push({ text: `Will check shortly.`, confidence: 'high', reason: 'Direct update' });
+      options.push({ text: `Sounds good.`, confidence: 'medium', reason: 'Concise agreement' });
+    }
+  } else if (formality === 'genz') {
+    if (intent === 'greeting') {
+      options.push({ text: `yooo wassup 💀`, confidence: 'high', reason: 'Gen-Z slang greeting' });
+      options.push({ text: `hey bestie fr 🔥`, confidence: 'high', reason: 'Gen-Z warm opening' });
+      options.push({ text: `yo valid`, confidence: 'medium', reason: 'Gen-Z casual greeting' });
+    } else if (intent === 'scheduling_question') {
+      options.push({ text: `bet let's do it 🔥`, confidence: 'high', reason: 'Gen-Z affirmative' });
+      options.push({ text: `lowkey down for that`, confidence: 'high', reason: 'Gen-Z confirmation' });
+      options.push({ text: `deadass free whenever 💀`, confidence: 'medium', reason: 'Gen-Z scheduling' });
+    } else if (intent === 'gratitude') {
+      options.push({ text: `anytime bestie 🫡`, confidence: 'high', reason: 'Gen-Z gratitude' });
+      options.push({ text: `no cap anytime 🔥`, confidence: 'high', reason: 'Gen-Z response' });
+      options.push({ text: `valid fr 💀`, confidence: 'medium', reason: 'Gen-Z acknowledgement' });
+    } else {
+      options.push({ text: `fr sounds good 🔥`, confidence: 'high', reason: 'Gen-Z agreement' });
+      options.push({ text: `deadass haha 💀`, confidence: 'high', reason: 'Gen-Z reaction' });
+      options.push({ text: `bet, on it rn`, confidence: 'medium', reason: 'Gen-Z confirmation' });
+    }
   } else {
-    options.push({ text: adapt(`sounds good! let's do that ${topEmoji}`), confidence: 'medium', reason: 'Own Mind NLP: Style-adapted affirmation' });
-    options.push({ text: adapt(`got it, let me get back to you soon`), confidence: 'medium', reason: 'Own Mind NLP: Context reply' });
-    options.push({ text: adapt(`haha awesome ${secondEmoji}`), confidence: 'medium', reason: 'Own Mind NLP: Engaging continuation' });
+    // Casual
+    if (matchedPast.length > 0) {
+      options.push({
+        text: adapt(matchedPast[0]),
+        confidence: 'high',
+        reason: `Matched learned memory corpus: "${matchedPast[0]}"`
+      });
+    }
+
+    if (intent === 'greeting') {
+      options.push({ text: adapt(`${topGreeting}! how's it going? ${topEmoji}`), confidence: 'high', reason: 'Own Mind NLP: Friendly greeting matching your persona' });
+      options.push({ text: adapt(`yo! what's up?`), confidence: 'medium', reason: 'Own Mind NLP: Casual greeting' });
+      options.push({ text: adapt(`hey there! hope all is well ${secondEmoji}`), confidence: 'medium', reason: 'Own Mind NLP: Warm greeting' });
+    } else if (intent === 'scheduling_question') {
+      options.push({ text: adapt(`yeah sounds good! let's do it ${topEmoji}`), confidence: 'high', reason: 'Own Mind NLP: Scheduling affirmation' });
+      options.push({ text: adapt(`let me check my schedule and ping you in a bit`), confidence: 'medium', reason: 'Own Mind NLP: Thoughtful scheduling' });
+      options.push({ text: adapt(`sure! what time works best for you?`), confidence: 'medium', reason: 'Own Mind NLP: Direct coordination' });
+    } else if (intent === 'gratitude') {
+      options.push({ text: adapt(`anytime! glad to help ${topEmoji}`), confidence: 'high', reason: 'Own Mind NLP: Natural gratitude response' });
+      options.push({ text: adapt(`no worries at all!`), confidence: 'medium', reason: 'Own Mind NLP: Relaxed response' });
+      options.push({ text: adapt(`you got it ${secondEmoji}`), confidence: 'medium', reason: 'Own Mind NLP: Upbeat response' });
+    } else if (intent === 'status_inquiry') {
+      options.push({ text: adapt(`yes, taking a look right now! ${topEmoji}`), confidence: 'high', reason: 'Own Mind NLP: Status acknowledgement' });
+      options.push({ text: adapt(`on it, will update you shortly`), confidence: 'medium', reason: 'Own Mind NLP: Direct response' });
+      options.push({ text: adapt(`checked it, looks great! ${secondEmoji}`), confidence: 'medium', reason: 'Positive confirmation' });
+    } else {
+      options.push({ text: adapt(`sounds good! let's do that ${topEmoji}`), confidence: 'medium', reason: 'Own Mind NLP: Style-adapted affirmation' });
+      options.push({ text: adapt(`got it, let me get back to you soon`), confidence: 'medium', reason: 'Own Mind NLP: Context reply' });
+      options.push({ text: adapt(`haha awesome ${secondEmoji}`), confidence: 'medium', reason: 'Own Mind NLP: Engaging continuation' });
+    }
   }
 
   // Deduplicate and ensure exactly 3 distinct options
@@ -536,6 +593,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     (async () => {
       const incoming = (payload?.incoming_message || '').trim();
       const contactName = payload?.contact_name || '';
+      const formality = (payload?.formality || 'casual').toLowerCase();
       const isRetry = payload?.is_retry || false;
       const history = payload?.conversation_history || [];
       const currentDraft = payload?.current_draft || '';
@@ -545,7 +603,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return;
       }
 
-      const cacheKey = `${incoming.toLowerCase()}_${contactName}_${currentDraft}_${isRetry}`;
+      const cacheKey = `${incoming.toLowerCase()}_${contactName}_${formality}_${currentDraft}_${isRetry}`;
 
       // 0a. Check In-Memory Cache (Sub-1ms fast path)
       if (!isRetry) {
@@ -556,8 +614,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
       }
 
-      // 0b. Check Sub-5ms Instant Response Templates
-      if (!isRetry && !currentDraft) {
+      // 0b. Check Instant Response Templates only for casual/neutral
+      if (!isRetry && !currentDraft && (formality === 'casual' || formality === 'neutral')) {
         const instantOptions = getInstantReply(incoming);
         if (instantOptions) {
           const resData = {
@@ -574,10 +632,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const localSuggest = await callLocalBackend('/api/suggest', 'POST', {
         incoming_message: incoming,
         contact_name: contactName,
+        formality: formality,
         conversation_history: history,
         is_retry: isRetry,
         current_draft: currentDraft
-      }, isRetry ? 18000 : 15000);
+      }, isRetry ? 12000 : 8000);
 
       if (localSuggest && localSuggest.suggestions && localSuggest.suggestions.length > 0) {
         setCachedSuggestion(cacheKey, localSuggest);
@@ -588,7 +647,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return;
       }
 
-      // 2. Prepare Context & Persona Prompts with Few-Shot Examples
+      // 2. Prepare Context & Persona Prompts with Tone-Specific Instructions
       const profile = await getProfile();
       const learned = await getLearnedMessages();
 
@@ -600,26 +659,36 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const topGreeting = profile.top_greetings?.[0]?.greeting || 'hey';
       const lowercasePref = (profile.punctuation_habits?.lowercase_only || 0) > 3;
 
+      let toneRule = "Tone: Casual, warm, relaxed conversational texting.";
+      let maxWords = 8;
+      if (formality === 'formal') {
+        toneRule = "Tone: Professional, articulate, polite business English. Proper capitalization and formal phrasing.";
+        maxWords = 14;
+      } else if (formality === 'concise') {
+        toneRule = "Tone: Ultra-concise, direct, punchy (2 to 5 words max). No filler words.";
+        maxWords = 5;
+      } else if (formality === 'genz') {
+        toneRule = "Tone: Gen-Z slang, modern internet speak, lowercase, expressive emojis (fr, lol, deadass, bet, ngl, 💀, 🔥).";
+        maxWords = 8;
+      }
+
       // Extract real few-shot samples
       const sampleTexts = learned.slice(-5).map(m => ` - "${m}"`).join('\n');
 
       const systemPrompt = `You are Echo — an ultra-realistic, personalized messaging AI copilot.
-Task: Generate EXACTLY 3 distinct, high-quality reply suggestions to the incoming message that sound 100% like how the user naturally texts.
+${toneRule}
+Task: Generate EXACTLY 3 distinct, high-quality reply suggestions to the incoming message matching this exact tone and personality.
 
 User Natural Style Persona:
-- Brevity: Short & punchy (~4 to 12 words per reply). Never sound like a formal robot.
+- Brevity: Short & punchy (~${maxWords} words max per reply).
 - Preferred Greeting: "${topGreeting}"
-- Favorite Emojis (use naturally at ends of thoughts): ${topEmoji} ${secondEmoji}
-- Lowercase preference: ${lowercasePref ? 'Prefers casual lowercase' : 'Standard casing'}
+- Favorite Emojis: ${topEmoji} ${secondEmoji}
+- Lowercase preference: ${(lowercasePref && formality !== 'formal') ? 'Prefers casual lowercase' : 'Standard casing'}
 ${sampleTexts ? `\nReal Examples of how this user naturally messages:\n${sampleTexts}` : ''}
 
 Strict Output Format:
 Respond ONLY with a valid JSON array of 3 distinct string options:
-["Option 1", "Option 2", "Option 3"]
-
-Option 1: Direct Affirmative / Confirmation / Yes (e.g. confirming attendance, time, or agreement)
-Option 2: Constructive Alternative / Reschedule / Clarification (e.g. offering an alternate time, asking details, or checking schedule)
-Option 3: Warm / Engaging follow-up (friendly reaction, enthusiastic acknowledgement, or next step)`;
+["Option 1", "Option 2", "Option 3"]`;
 
       const userPrompt = `${historyText ? `Recent Chat Context:\n${historyText}\n\n` : ''}${draftText}
 Incoming Message: "${incoming}"
@@ -627,8 +696,8 @@ ${isRetry ? 'Generate 3 FRESH, distinct creative reply ideas.' : 'Generate 3 nat
 
       let suggestions: any[] = [];
 
-      // 3. Direct Local Ollama (qwen3.5:4b) with think: false
-      const ollamaRaw = await callOllamaLLM(userPrompt, systemPrompt, DEFAULT_OLLAMA_MODEL, isRetry ? 0.75 : 0.65, 18000, 120);
+      // 3. Direct Local Ollama (llama3.2:1b / qwen3.5:4b) with think: false
+      const ollamaRaw = await callOllamaLLM(userPrompt, systemPrompt, DEFAULT_OLLAMA_MODEL, isRetry ? 0.75 : 0.65, 8000, 65);
       if (ollamaRaw) {
         try {
           const sIdx = ollamaRaw.indexOf('[');
@@ -637,9 +706,9 @@ ${isRetry ? 'Generate 3 FRESH, distinct creative reply ideas.' : 'Generate 3 nat
             const parsed = JSON.parse(ollamaRaw.substring(sIdx, eIdx + 1));
             if (Array.isArray(parsed) && parsed.length > 0) {
               suggestions = parsed.slice(0, 3).map((txt, idx) => ({
-                text: String(txt).trim().replace(/^["']|["']$/g, ''),
+                text: cleanRepetitiveText(String(txt).trim().replace(/^["']|["']$/g, '')),
                 confidence: 'high',
-                reason: idx === 0 ? 'Qwen 3.5: Direct natural reaction' : (idx === 1 ? 'Qwen 3.5: Action continuation' : 'Qwen 3.5: Persona & style matched')
+                reason: `Ollama (${formality}): ${idx === 0 ? 'Direct reaction' : (idx === 1 ? 'Action continuation' : 'Tone matched')}`
               }));
             }
           }
@@ -653,7 +722,7 @@ ${isRetry ? 'Generate 3 FRESH, distinct creative reply ideas.' : 'Generate 3 nat
         const raw = await callNvidiaLLM([
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
-        ], isRetry ? 0.85 : 0.65, 160);
+        ], isRetry ? 0.85 : 0.65, 90);
 
         if (raw) {
           try {
@@ -663,9 +732,9 @@ ${isRetry ? 'Generate 3 FRESH, distinct creative reply ideas.' : 'Generate 3 nat
               const parsed = JSON.parse(raw.substring(sIdx, eIdx + 1));
               if (Array.isArray(parsed) && parsed.length > 0) {
                 suggestions = parsed.slice(0, 3).map((txt, idx) => ({
-                  text: String(txt).trim().replace(/^["']|["']$/g, ''),
+                  text: cleanRepetitiveText(String(txt).trim().replace(/^["']|["']$/g, '')),
                   confidence: 'high',
-                  reason: idx === 0 ? 'NVIDIA Llama: Direct reaction' : (isRetry ? 'NVIDIA Llama: Fresh creative variation' : 'NVIDIA Llama: Style suggestion')
+                  reason: `NVIDIA (${formality}): ${idx === 0 ? 'Direct reaction' : (isRetry ? 'Fresh creative variation' : 'Style suggestion')}`
                 }));
               }
             }
