@@ -4,9 +4,18 @@ import os
 from typing import Dict, List, Any, Optional
 from config import settings
 
+_db_initialized = False
+
 def get_db():
+    global _db_initialized
     conn = sqlite3.connect(settings.DB_PATH)
     conn.row_factory = sqlite3.Row
+    if not _db_initialized:
+        _db_initialized = True
+        try:
+            init_db()
+        except Exception:
+            pass
     return conn
 
 def init_db():
@@ -48,6 +57,37 @@ def init_db():
     );
     """)
     
+    # Table for per-contact relationship memory & tone preferences
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS contact_preferences (
+        contact_id TEXT PRIMARY KEY,
+        preferred_tone TEXT DEFAULT 'casual',
+        notes TEXT DEFAULT '',
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+
+    # Table for customizable slash commands and macro text expanders
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS snippets (
+        shortcut TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        description TEXT DEFAULT ''
+    );
+    """)
+    
+    # Seed default snippets if empty
+    cursor.execute("SELECT COUNT(*) FROM snippets")
+    if cursor.fetchone()[0] == 0:
+        default_snippets = [
+            ("/cal", "Here's my booking link: https://calendly.com/your-name/30min - feel free to pick a time that works best!", "Meeting / Calendar Link"),
+            ("/meet", "Let's hop on Google Meet: https://meet.google.com/abc-defg-hij", "Google Meet Link"),
+            ("/loc", "My office address: 100 Innovation Blvd, Tech Park, Suite 400", "Office Location Address"),
+            ("/bank", "Payment Details - UPI ID: user@upi | Bank A/C: 1234567890 (IFSC: HDFC0001234)", "Payment / Bank Info"),
+            ("/phone", "You can reach me directly at: +1 (555) 019-2834", "Phone Number")
+        ]
+        cursor.executemany("INSERT OR REPLACE INTO snippets (shortcut, content, description) VALUES (?, ?, ?)", default_snippets)
+
     # Ensure default row in style_profile
     cursor.execute("SELECT id FROM style_profile WHERE id = 1")
     if not cursor.fetchone():
@@ -77,6 +117,17 @@ def get_all_user_messages(contact_id: Optional[str] = None) -> List[Dict[str, An
     rows = cursor.fetchall()
     conn.close()
     return [{"content": row["content"], "weight": row["weight"] or 1.0} for row in rows]
+
+def has_messages_with_embeddings(contact_id: Optional[str] = None) -> bool:
+    conn = get_db()
+    cursor = conn.cursor()
+    if contact_id:
+        cursor.execute("SELECT 1 FROM messages WHERE sender = 'user' AND embedding IS NOT NULL AND (contact_id = ? OR contact_id = '') LIMIT 1", (contact_id,))
+    else:
+        cursor.execute("SELECT 1 FROM messages WHERE sender = 'user' AND embedding IS NOT NULL LIMIT 1")
+    row = cursor.fetchone()
+    conn.close()
+    return row is not None
 
 def get_messages_with_embeddings(contact_id: Optional[str] = None) -> List[Dict[str, Any]]:
     conn = get_db()
@@ -175,5 +226,84 @@ def clear_db():
     cursor = conn.cursor()
     cursor.execute("DELETE FROM messages")
     cursor.execute("UPDATE style_profile SET emoji_counts='{}', greetings_counts='{}', avg_sentence_length=0.0, punctuation_habits='{}', total_messages_learned=0 WHERE id=1")
+    conn.commit()
+    conn.close()
+
+# -----------------------------------------------------------------
+# Contact Relationship Preferences & Tone Memory
+# -----------------------------------------------------------------
+def get_contact_preference(contact_id: str) -> Optional[Dict[str, Any]]:
+    if not contact_id:
+        return None
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT contact_id, preferred_tone, notes, updated_at FROM contact_preferences WHERE contact_id = ?", (contact_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {
+            "contact_id": row["contact_id"],
+            "preferred_tone": row["preferred_tone"],
+            "notes": row["notes"] or "",
+            "updated_at": row["updated_at"]
+        }
+    return None
+
+def save_contact_preference(contact_id: str, preferred_tone: str = "casual", notes: str = ""):
+    if not contact_id:
+        return
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+    INSERT INTO contact_preferences (contact_id, preferred_tone, notes, updated_at)
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(contact_id) DO UPDATE SET
+        preferred_tone = excluded.preferred_tone,
+        notes = excluded.notes,
+        updated_at = CURRENT_TIMESTAMP
+    """, (contact_id, preferred_tone, notes))
+    conn.commit()
+    conn.close()
+
+def get_all_contact_preferences() -> List[Dict[str, Any]]:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT contact_id, preferred_tone, notes, updated_at FROM contact_preferences ORDER BY updated_at DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"contact_id": r["contact_id"], "preferred_tone": r["preferred_tone"], "notes": r["notes"], "updated_at": r["updated_at"]} for r in rows]
+
+# -----------------------------------------------------------------
+# Snippets & Slash Command Macros
+# -----------------------------------------------------------------
+def get_snippets() -> List[Dict[str, str]]:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT shortcut, content, description FROM snippets ORDER BY shortcut ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"shortcut": r["shortcut"], "content": r["content"], "description": r["description"] or ""} for r in rows]
+
+def save_snippet(shortcut: str, content: str, description: str = ""):
+    clean_sc = shortcut.strip().lower()
+    if not clean_sc.startswith("/"):
+        clean_sc = "/" + clean_sc
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+    INSERT INTO snippets (shortcut, content, description)
+    VALUES (?, ?, ?)
+    ON CONFLICT(shortcut) DO UPDATE SET
+        content = excluded.content,
+        description = excluded.description
+    """, (clean_sc, content.strip(), description.strip()))
+    conn.commit()
+    conn.close()
+
+def delete_snippet(shortcut: str):
+    clean_sc = shortcut.strip().lower()
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM snippets WHERE shortcut = ?", (clean_sc,))
     conn.commit()
     conn.close()

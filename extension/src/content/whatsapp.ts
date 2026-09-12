@@ -6,8 +6,110 @@ let isGenerating = false;
 let isLearningActive = true;
 let isAssistantOpen = false;
 let isPolishModalOpen = false;
+let isSummaryModalOpen = false;
 let isOpacityPopoverOpen = false;
 let glassOpacity = 72; // default 72% opacity (28% transparency)
+
+// Folding and Custom Drag/Positioning State
+let isBarFolded: boolean = false;
+let isCustomPosition: boolean = false;
+let customPosX: number = 0;
+let customPosY: number = 0;
+let isDraggingBar: boolean = false;
+
+// Productivity Supercharger State
+let activeTone: string = 'casual'; // 'casual' | 'concise' | 'formal' | 'genz'
+let isRecordingVoice: boolean = false;
+let speechRecognitionInstance: any = null;
+let currentGhostCompletion: string = '';
+let activeSnippets: any[] = [];
+let isSlashMenuOpen: boolean = false;
+let activeContactCached: string = '';
+let lastRenderedSuggestions: any[] = [];
+
+// Position and Fold Helpers
+function initBarPositionAndFold() {
+  try {
+    const folded = localStorage.getItem('echo_bar_folded');
+    if (folded === 'true') isBarFolded = true;
+
+    const posStr = localStorage.getItem('echo_bar_pos');
+    if (posStr) {
+      const pos = JSON.parse(posStr);
+      if (typeof pos.x === 'number' && typeof pos.y === 'number') {
+        customPosX = pos.x;
+        customPosY = pos.y;
+        isCustomPosition = true;
+      }
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+function saveBarPosition(x: number, y: number) {
+  customPosX = x;
+  customPosY = y;
+  isCustomPosition = true;
+  try {
+    localStorage.setItem('echo_bar_pos', JSON.stringify({ x, y }));
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      chrome.storage.local.set({ echo_bar_pos: { x, y } });
+    }
+  } catch {}
+}
+
+function resetBarPosition() {
+  isCustomPosition = false;
+  try {
+    localStorage.removeItem('echo_bar_pos');
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      chrome.storage.local.remove(['echo_bar_pos']);
+    }
+  } catch {}
+
+  const bar = document.getElementById('echo-ai-bar');
+  if (bar) {
+    bar.classList.remove('echo-custom-pos');
+    bar.style.removeProperty('left');
+    bar.style.removeProperty('top');
+    bar.style.removeProperty('bottom');
+    bar.style.removeProperty('right');
+    const footerNode = findFooterNode();
+    if (footerNode && bar.nextElementSibling !== footerNode) {
+      footerNode.parentNode?.insertBefore(bar, footerNode);
+    }
+  }
+}
+
+function toggleFold(forceFold?: boolean) {
+  isBarFolded = forceFold !== undefined ? forceFold : !isBarFolded;
+  try {
+    localStorage.setItem('echo_bar_folded', String(isBarFolded));
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      chrome.storage.local.set({ echo_bar_folded: isBarFolded });
+    }
+  } catch {}
+
+  const bar = document.getElementById('echo-ai-bar');
+  if (bar) {
+    if (isBarFolded) {
+      bar.classList.add('echo-folded');
+      const foldBtn = document.getElementById('echo-fold-btn');
+      if (foldBtn) {
+        foldBtn.innerText = '⤢';
+        foldBtn.title = 'Unfold Echo Bar (Alt+M)';
+      }
+    } else {
+      bar.classList.remove('echo-folded');
+      const foldBtn = document.getElementById('echo-fold-btn');
+      if (foldBtn) {
+        foldBtn.innerText = '⟨—⟩';
+        foldBtn.title = 'Fold / Minimize Echo Bar (Alt+M)';
+      }
+    }
+  }
+}
 
 // Helper: Safely send message to background service worker with full lifecycle handling
 function sendToBackground(action: string, payload?: any): Promise<any> {
@@ -287,7 +389,7 @@ function getCurrentInputText(): string {
   return '';
 }
 
-// Fill chat text input field across platforms with React state sync
+// Fill chat text input field across platforms cleanly with zero duplicate repetitions
 function fillTextInput(text: string) {
   const platform = getPlatformName();
   let inputContainer: HTMLElement | null = null;
@@ -308,52 +410,52 @@ function fillTextInput(text: string) {
     inputContainer = document.querySelector('div[contenteditable="true"], textarea');
   }
 
-  if (inputContainer) {
-    let targetEl: HTMLElement = inputContainer;
-    const innerLeaf = inputContainer.querySelector('span[data-slate-leaf="true"], span[data-slate-string="true"], span[dir="auto"], p');
-    if (innerLeaf) {
-      targetEl = innerLeaf as HTMLElement;
+  if (!inputContainer) return;
+
+  inputContainer.focus();
+
+  if (inputContainer.tagName.toLowerCase() === 'textarea') {
+    const ta = inputContainer as HTMLTextAreaElement;
+    ta.value = text;
+    ta.selectionStart = ta.value.length;
+    ta.selectionEnd = ta.value.length;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    ta.dispatchEvent(new Event('change', { bubbles: true }));
+    return;
+  }
+
+  // Handle contenteditable elements (Instagram Lexical, WhatsApp Slate, Telegram, Discord, X)
+  try {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(inputContainer);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    // Standard insertion via execCommand
+    const executed = document.execCommand('insertText', false, text);
+    if (!executed) {
+      inputContainer.innerText = text;
     }
+  } catch {
+    inputContainer.innerText = text;
+  }
 
-    targetEl.focus();
+  // Dispatch standard input & change events WITHOUT extra synthetic beforeinput with data
+  // (which would cause Lexical / React to duplicate the text a second time)
+  inputContainer.dispatchEvent(new Event('input', { bubbles: true }));
+  inputContainer.dispatchEvent(new Event('change', { bubbles: true }));
 
-    if (inputContainer.tagName.toLowerCase() === 'textarea') {
-      const ta = inputContainer as HTMLTextAreaElement;
-      ta.value = text;
-      ta.selectionStart = ta.value.length;
-      ta.selectionEnd = ta.value.length;
-      ta.dispatchEvent(new Event('input', { bubbles: true }));
-      ta.dispatchEvent(new Event('change', { bubbles: true }));
-    } else {
-      try {
-        const selection = window.getSelection();
-        const range = document.createRange();
-        range.selectNodeContents(targetEl);
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-        document.execCommand('selectAll', false, undefined);
-        document.execCommand('insertText', false, text);
-      } catch {
-        targetEl.innerText = text;
-      }
-
-      // Dispatch React event cascade
-      inputContainer.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: text, bubbles: true }));
-      inputContainer.dispatchEvent(new InputEvent('input', { inputType: 'insertText', data: text, bubbles: true }));
-      inputContainer.dispatchEvent(new Event('change', { bubbles: true }));
-
-      // Invoke React props handler directly if available
-      try {
-        const reactKey = Object.keys(inputContainer).find(k => k.startsWith('__reactProps$') || k.startsWith('__reactEventHandlers$'));
-        if (reactKey) {
-          const props = (inputContainer as any)[reactKey];
-          if (props?.onInput) props.onInput({ target: inputContainer, currentTarget: inputContainer });
-          if (props?.onChange) props.onChange({ target: inputContainer, currentTarget: inputContainer });
-        }
-      } catch {
-        // Ignore react internal error
-      }
+  // Invoke React props handler directly if available
+  try {
+    const reactKey = Object.keys(inputContainer).find(k => k.startsWith('__reactProps$') || k.startsWith('__reactEventHandlers$'));
+    if (reactKey) {
+      const props = (inputContainer as any)[reactKey];
+      if (props?.onInput) props.onInput({ target: inputContainer, currentTarget: inputContainer });
+      if (props?.onChange) props.onChange({ target: inputContainer, currentTarget: inputContainer });
     }
+  } catch {
+    // Ignore react internal error
   }
 }
 
@@ -571,11 +673,342 @@ function openPolishModal(initialText?: string) {
     }
   }
 
-  modal.style.display = 'flex';
-  isPolishModalOpen = true;
-
   if (draft && draft.length > 3) {
     document.getElementById('echo-btn-do-refine')?.click();
+  }
+}
+
+// -------------------------------------------------------------
+// 1. Thread Summarizer Modal ("Catch Me Up" • Alt + S)
+// -------------------------------------------------------------
+async function openThreadSummaryModal() {
+  let modal = document.getElementById('echo-summary-modal');
+  const contactName = extractActiveContactName();
+  const context = extractConversationContext();
+
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'echo-summary-modal';
+    modal.className = 'echo-glass-modal';
+    modal.innerHTML = `
+      <div class="echo-glass-card echo-summary-card">
+        <div class="echo-glass-card-header">
+          <div class="echo-header-title">
+            <span class="echo-glow-icon">📜</span>
+            <div>
+              <h3>Chat Catch Up & Summary</h3>
+              <p id="echo-summary-subtitle">Analyzing recent messages...</p>
+            </div>
+          </div>
+          <div class="echo-header-controls">
+            <button id="echo-summary-close" class="echo-btn-close">✕</button>
+          </div>
+        </div>
+
+        <div class="echo-summary-body" id="echo-summary-content">
+          <div style="display: flex; align-items: center; justify-content: center; padding: 30px; gap: 8px; color: var(--echo-text-muted);">
+            <span class="echo-spinner"></span> Echoing conversation summary...
+          </div>
+        </div>
+
+        <div class="echo-glass-card-footer">
+          <button id="echo-btn-copy-summary" class="echo-btn-primary">
+            <span>📋 Copy Summary</span>
+          </button>
+          <button id="echo-btn-refresh-summary" class="echo-btn-secondary">
+            <span>🔄 Refresh</span>
+          </button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    document.getElementById('echo-summary-close')?.addEventListener('click', () => {
+      modal!.style.display = 'none';
+      isSummaryModalOpen = false;
+    });
+
+    document.getElementById('echo-btn-copy-summary')?.addEventListener('click', () => {
+      const text = document.getElementById('echo-summary-content')?.innerText || '';
+      if (text) {
+        navigator.clipboard.writeText(text);
+        const btn = document.getElementById('echo-btn-copy-summary');
+        if (btn) {
+          btn.innerHTML = '<span>✓ Copied!</span>';
+          setTimeout(() => { btn.innerHTML = '<span>📋 Copy Summary</span>'; }, 2000);
+        }
+      }
+    });
+
+    document.getElementById('echo-btn-refresh-summary')?.addEventListener('click', () => {
+      openThreadSummaryModal();
+    });
+  }
+
+  const subtitle = document.getElementById('echo-summary-subtitle');
+  if (subtitle) {
+    subtitle.innerText = contactName ? `Active conversation with ${contactName}` : 'Recent conversation thread';
+  }
+
+  const contentEl = document.getElementById('echo-summary-content');
+  if (contentEl) {
+    contentEl.innerHTML = `
+      <div style="display: flex; align-items: center; justify-content: center; padding: 30px; gap: 8px; color: var(--echo-text-muted);">
+        <span class="echo-spinner"></span> Echoing conversation summary with Llama 3.2...
+      </div>
+    `;
+  }
+
+  modal.style.display = 'flex';
+  isSummaryModalOpen = true;
+
+  const messagesToSend = context.length > 0 ? context : [{ sender: 'them', text: extractLatestIncomingMessage() || 'No recent messages' }];
+  const res = await sendToBackground('SUMMARIZE_THREAD', {
+    messages: messagesToSend,
+    contact_name: contactName
+  });
+
+  if (contentEl) {
+    if (res && res.success && res.data?.summary) {
+      const rawText: string = res.data.summary;
+      
+      // Parse structured sections
+      let topicPart = '';
+      let actionsPart = '';
+      let decisionsPart = '';
+
+      if (rawText.includes('TOPIC:') && rawText.includes('ACTIONS')) {
+        const parts1 = rawText.split('ACTIONS');
+        topicPart = parts1[0].replace('TOPIC:', '').trim();
+        
+        if (parts1[1].includes('DECISIONS')) {
+          const parts2 = parts1[1].split('DECISIONS');
+          actionsPart = parts2[0].replace(/& QUESTIONS FOR YOU:?/, '').replace(':', '').trim();
+          decisionsPart = parts2[1].replace(/& NEXT STEPS:?/, '').replace(':', '').trim();
+        } else {
+          actionsPart = parts1[1].replace(/& QUESTIONS FOR YOU:?/, '').replace(':', '').trim();
+        }
+      }
+
+      if (topicPart || actionsPart || decisionsPart) {
+        contentEl.innerHTML = `
+          <div class="echo-summary-section echo-summary-sec-topic">
+            <div class="echo-summary-sec-title">📌 Discussion Topic</div>
+            <div class="echo-summary-text">${topicPart || 'General ongoing conversation.'}</div>
+          </div>
+          <div class="echo-summary-section echo-summary-sec-actions">
+            <div class="echo-summary-sec-title">❓ Questions & Actions for You</div>
+            <div class="echo-summary-text">${actionsPart || 'No pending direct questions detected.'}</div>
+          </div>
+          <div class="echo-summary-section echo-summary-sec-decisions">
+            <div class="echo-summary-sec-title">🤝 Decisions & Next Steps</div>
+            <div class="echo-summary-text">${decisionsPart || 'No specific scheduling or deadlines mentioned.'}</div>
+          </div>
+        `;
+      } else {
+        contentEl.innerHTML = `
+          <div class="echo-summary-section">
+            <div class="echo-summary-text">${rawText}</div>
+          </div>
+        `;
+      }
+    } else {
+      contentEl.innerHTML = `
+        <div style="padding: 20px; text-align: center; color: var(--echo-text-muted);">
+          ⚠️ Unable to generate summary. Ensure local backend or internet connection is active.
+        </div>
+      `;
+    }
+  }
+}
+
+// -------------------------------------------------------------
+// 2. Voice-to-Text with AI Polish & Filler Removal
+// -------------------------------------------------------------
+function toggleVoiceRecording() {
+  const SpeechRec = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+  if (!SpeechRec) {
+    alert('Speech recognition is not supported in this browser engine.');
+    return;
+  }
+
+  const micBtn = document.getElementById('echo-mic-btn');
+  const suggestionsContainer = document.getElementById('echo-suggestions');
+
+  if (isRecordingVoice && speechRecognitionInstance) {
+    speechRecognitionInstance.stop();
+    isRecordingVoice = false;
+    if (micBtn) micBtn.classList.remove('recording');
+    return;
+  }
+
+  try {
+    speechRecognitionInstance = new SpeechRec();
+    speechRecognitionInstance.continuous = false;
+    speechRecognitionInstance.interimResults = false;
+    speechRecognitionInstance.lang = 'en-US';
+
+    speechRecognitionInstance.onstart = () => {
+      isRecordingVoice = true;
+      if (micBtn) {
+        micBtn.classList.add('recording');
+        micBtn.title = 'Recording voice... Speak naturally. Click to stop.';
+      }
+      if (suggestionsContainer) {
+        suggestionsContainer.innerHTML = `
+          <span class="echo-loading" style="color: #ef4444; font-weight: 700;">
+            <span class="echo-spinner" style="border-top-color: #ef4444;"></span> 🎙️ Listening... speak naturally
+          </span>
+        `;
+      }
+    };
+
+    speechRecognitionInstance.onresult = async (event: any) => {
+      const transcript = event.results?.[0]?.[0]?.transcript || '';
+      if (transcript) {
+        if (suggestionsContainer) {
+          suggestionsContainer.innerHTML = `
+            <span class="echo-loading">
+              <span class="echo-spinner"></span> 🪄 AI Polishing voice draft...
+            </span>
+          `;
+        }
+
+        // Clean filler words and typos
+        const res = await sendToBackground('REFINE_VOCAB', { text: transcript, action: 'fix_vocab' });
+        const polished = res?.success && res.data?.refined ? res.data.refined : transcript;
+
+        fillTextInput(polished);
+        triggerReplyGeneration(true);
+      }
+    };
+
+    speechRecognitionInstance.onerror = (e: any) => {
+      console.warn('[Echo Voice Error]:', e);
+      isRecordingVoice = false;
+      if (micBtn) micBtn.classList.remove('recording');
+      triggerReplyGeneration();
+    };
+
+    speechRecognitionInstance.onend = () => {
+      isRecordingVoice = false;
+      if (micBtn) micBtn.classList.remove('recording');
+    };
+
+    speechRecognitionInstance.start();
+  } catch (err) {
+    console.error('[Echo Speech Start Error]:', err);
+    isRecordingVoice = false;
+    if (micBtn) micBtn.classList.remove('recording');
+  }
+}
+
+// -------------------------------------------------------------
+// 3. Quick Slash Commands & Macro Text Expander
+// -------------------------------------------------------------
+async function fetchActiveSnippets(): Promise<any[]> {
+  const res = await sendToBackground('GET_SNIPPETS');
+  if (res && res.success && Array.isArray(res.data)) {
+    activeSnippets = res.data;
+  }
+  return activeSnippets;
+}
+
+function renderSlashMenu(matches: any[], query: string) {
+  let menu = document.getElementById('echo-slash-menu');
+  if (!menu) {
+    menu = document.createElement('div');
+    menu.id = 'echo-slash-menu';
+    menu.className = 'echo-slash-menu';
+    const bar = document.getElementById('echo-ai-bar');
+    if (bar) bar.appendChild(menu);
+    else document.body.appendChild(menu);
+  }
+
+  if (matches.length === 0) {
+    menu.style.display = 'none';
+    isSlashMenuOpen = false;
+    return;
+  }
+
+  menu.innerHTML = `
+    <div class="echo-slash-header">
+      <span>🪄 Quick Macros (${matches.length})</span>
+      <span>Click / Tab to Expand</span>
+    </div>
+  `;
+
+  matches.forEach((item, idx) => {
+    const el = document.createElement('div');
+    el.className = `echo-slash-item ${idx === 0 ? 'selected' : ''}`;
+    el.innerHTML = `
+      <div class="echo-slash-top">
+        <span class="echo-slash-shortcut">${item.shortcut}</span>
+        <span class="echo-slash-desc">${item.description || 'Quick Macro'}</span>
+      </div>
+      <div class="echo-slash-preview">${item.content}</div>
+    `;
+    el.addEventListener('click', () => {
+      applySnippetExpansion(item, query);
+    });
+    menu!.appendChild(el);
+  });
+
+  menu.style.display = 'flex';
+  isSlashMenuOpen = true;
+}
+
+function hideSlashMenu() {
+  const menu = document.getElementById('echo-slash-menu');
+  if (menu) menu.style.display = 'none';
+  isSlashMenuOpen = false;
+}
+
+function applySnippetExpansion(snippet: any, query: string) {
+  const current = getCurrentInputText();
+  let expanded = snippet.content;
+
+  // Handle translation macro /trans <text>
+  if (snippet.shortcut === '/trans' || query.startsWith('/trans')) {
+    const textToTrans = query.replace(/^\/trans\s*/i, '').trim();
+    if (textToTrans) {
+      sendToBackground('TRANSLATE_TEXT', { text: textToTrans, target_lang: 'English' }).then((res) => {
+        if (res?.success && res.data?.translated) {
+          fillTextInput(res.data.translated);
+        }
+      });
+      hideSlashMenu();
+      return;
+    }
+  }
+
+  if (current.startsWith('/')) {
+    fillTextInput(expanded);
+  } else {
+    fillTextInput(current.replace(query, expanded));
+  }
+  hideSlashMenu();
+}
+
+// -------------------------------------------------------------
+// 4. Contact-Specific Relationship Memory & Tone Auto-Load
+// -------------------------------------------------------------
+async function updateActiveContactTone(contactName: string) {
+  if (!contactName || contactName === activeContactCached) return;
+  activeContactCached = contactName;
+
+  const res = await sendToBackground('GET_CONTACT_TONE', { contact_id: contactName });
+  if (res && res.success && res.data?.preferred_tone) {
+    activeTone = res.data.preferred_tone;
+    // Update tone pills in bar
+    const pills = document.querySelectorAll('.echo-tone-pill');
+    pills.forEach((p) => {
+      if (p.getAttribute('data-tone') === activeTone) {
+        p.classList.add('active');
+      } else {
+        p.classList.remove('active');
+      }
+    });
   }
 }
 
@@ -777,18 +1210,20 @@ function toggleOpacityPopover() {
   }
 }
 
-// Inject Floating Echo Luminous Frosted Glassmorphic Bar
+// Inject Floating Echo Luminous Frosted Glassmorphic Bar (Foldable & Freely Draggable)
 function injectEchoBar() {
+  initBarPositionAndFold();
   const footerNode = findFooterNode();
-  if (!footerNode) return;
+  if (!footerNode && !isCustomPosition) return;
 
   let bar = document.getElementById('echo-ai-bar');
   if (!bar) {
     bar = document.createElement('div');
     bar.id = 'echo-ai-bar';
-    bar.className = 'echo-glass-bar';
+    bar.className = `echo-glass-bar ${isBarFolded ? 'echo-folded' : ''} ${isCustomPosition ? 'echo-custom-pos' : ''}`;
     bar.innerHTML = `
-      <div class="echo-bar-brand" title="Echo Copilot • Frosted White Glassmorphism">
+      <div class="echo-bar-brand" id="echo-drag-handle" title="Drag to move Echo anywhere on screen • Click to Fold/Unfold (Alt+M)">
+        <span class="echo-grip-icon" title="Drag Handle">⠿</span>
         <div class="echo-brand-glow">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
@@ -797,17 +1232,32 @@ function injectEchoBar() {
           </svg>
         </div>
         <span class="echo-brand-name">Echo</span>
+        <span class="echo-folded-label">⚡ Suggestions</span>
+      </div>
+
+      <!-- Instant Tone Switcher Pills -->
+      <div class="echo-tone-cluster" title="Switch AI Suggestion Tone (Alt+1/2/3 to use)">
+        <button type="button" class="echo-tone-pill ${activeTone === 'casual' ? 'active' : ''}" data-tone="casual">🔥 Casual</button>
+        <button type="button" class="echo-tone-pill ${activeTone === 'concise' ? 'active' : ''}" data-tone="concise">⚡ Concise</button>
+        <button type="button" class="echo-tone-pill ${activeTone === 'formal' ? 'active' : ''}" data-tone="formal">💼 Formal</button>
+        <button type="button" class="echo-tone-pill ${activeTone === 'genz' ? 'active' : ''}" data-tone="genz">😈 Gen-Z</button>
       </div>
 
       <div class="echo-suggestions-container" id="echo-suggestions">
         <span class="echo-loading">
-          <span class="echo-sparkle">✨</span> Click 🔄 for smart ideas
+          <span class="echo-sparkle">✨</span> Click 🔄 or type for smart ideas
         </span>
       </div>
 
       <div class="echo-bar-tools">
-        <button type="button" class="echo-btn-pill echo-btn-polish" id="echo-polish-btn" title="Fix grammar & upgrade vocabulary in your draft message">
+        <button type="button" class="echo-btn-pill echo-btn-polish" id="echo-polish-btn" title="Fix grammar & vocabulary in draft (Alt+P)">
           🪄 Polish
+        </button>
+        <button type="button" class="echo-btn-pill" id="echo-summary-btn" title="Catch Me Up • Summarize active chat thread (Alt+S)">
+          📜 Catch Up
+        </button>
+        <button type="button" class="echo-btn-icon echo-btn-mic" id="echo-mic-btn" title="Voice-to-Text with AI Polish & Filler Removal">
+          🎙️
         </button>
         <button type="button" class="echo-btn-pill" id="echo-assistant-btn" title="Open Echo Copilot Assistant">
           🤖 Copilot
@@ -818,26 +1268,135 @@ function injectEchoBar() {
         <button type="button" class="echo-btn-icon ${isLearningActive ? 'active' : 'inactive'}" id="echo-incognito-btn" title="Toggle Passive Persona Learning">
           ${isLearningActive ? '🛡️' : '🙈'}
         </button>
-        <button type="button" class="echo-btn-icon echo-btn-refresh" id="echo-refresh-btn" title="Retry / Generate fresh ideas for the active message">
+        <button type="button" class="echo-btn-icon echo-btn-refresh" id="echo-refresh-btn" title="Retry / Generate fresh ideas (Alt+R)">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="23 4 23 10 17 10"></polyline>
             <polyline points="1 20 1 14 7 14"></polyline>
             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
           </svg>
         </button>
+        <!-- Fold / Minimize Button -->
+        <button type="button" class="echo-btn-icon echo-btn-fold" id="echo-fold-btn" title="Fold / Minimize Echo Bar (Alt+M)">
+          ${isBarFolded ? '⤢' : '⟨—⟩'}
+        </button>
+        <!-- Dock / Snap to Input Button -->
+        <button type="button" class="echo-btn-icon echo-btn-dock" id="echo-dock-btn" title="Snap / Dock to Chat Input">
+          📌
+        </button>
       </div>
     `;
+
+    // Setup Drag and Move Handlers
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    let hasDragged = false;
+
+    const onDragStart = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      const target = e.target as HTMLElement;
+      if (target.closest('button')) return;
+
+      e.preventDefault();
+      isDraggingBar = true;
+      hasDragged = false;
+      startX = e.clientX;
+      startY = e.clientY;
+
+      const rect = bar!.getBoundingClientRect();
+      startLeft = rect.left;
+      startTop = rect.top;
+
+      const onDragMove = (ev: MouseEvent) => {
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+          hasDragged = true;
+        }
+        if (hasDragged && bar) {
+          let newLeft = startLeft + dx;
+          let newTop = startTop + dy;
+          const maxLeft = Math.max(10, window.innerWidth - (bar.offsetWidth || 260) - 10);
+          const maxTop = Math.max(10, window.innerHeight - (bar.offsetHeight || 44) - 10);
+          newLeft = Math.max(10, Math.min(maxLeft, newLeft));
+          newTop = Math.max(10, Math.min(maxTop, newTop));
+
+          bar.classList.add('echo-custom-pos');
+          bar.style.left = `${newLeft}px`;
+          bar.style.top = `${newTop}px`;
+          bar.style.removeProperty('bottom');
+          bar.style.removeProperty('right');
+          if (bar.parentElement !== document.body) {
+            document.body.appendChild(bar);
+          }
+        }
+      };
+
+      const onDragEnd = () => {
+        window.removeEventListener('mousemove', onDragMove);
+        window.removeEventListener('mouseup', onDragEnd);
+        isDraggingBar = false;
+
+        if (hasDragged && bar) {
+          const rect = bar.getBoundingClientRect();
+          saveBarPosition(rect.left, rect.top);
+        }
+      };
+
+      window.addEventListener('mousemove', onDragMove);
+      window.addEventListener('mouseup', onDragEnd);
+    };
+
+    const dragHandle = bar.querySelector('#echo-drag-handle');
+    dragHandle?.addEventListener('mousedown', onDragStart as any);
 
     // Capture-phase event delegation for rock-solid interaction
     bar.addEventListener('click', (e) => {
       const target = e.target as HTMLElement;
+      const tonePill = target.closest('.echo-tone-pill');
       const refreshBtn = target.closest('#echo-refresh-btn');
       const polishBtn = target.closest('#echo-polish-btn');
+      const summaryBtn = target.closest('#echo-summary-btn');
+      const micBtn = target.closest('#echo-mic-btn');
       const assistantBtn = target.closest('#echo-assistant-btn');
       const opacityBtn = target.closest('#echo-opacity-btn');
       const incognitoBtn = target.closest('#echo-incognito-btn');
+      const foldBtn = target.closest('#echo-fold-btn');
+      const dockBtn = target.closest('#echo-dock-btn');
 
-      if (refreshBtn) {
+      // Unfold on clicking folded pill
+      if (isBarFolded && !target.closest('button')) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleFold(false);
+        return;
+      }
+
+      if (foldBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleFold();
+      } else if (dockBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        resetBarPosition();
+      } else if (tonePill) {
+        e.preventDefault();
+        e.stopPropagation();
+        const chosenTone = tonePill.getAttribute('data-tone') || 'casual';
+        activeTone = chosenTone;
+        bar!.querySelectorAll('.echo-tone-pill').forEach(p => p.classList.remove('active'));
+        tonePill.classList.add('active');
+
+        // Save contact preference
+        const contactName = extractActiveContactName();
+        if (contactName) {
+          sendToBackground('SET_CONTACT_TONE', { contact_id: contactName, preferred_tone: activeTone });
+        }
+
+        triggerReplyGeneration(true);
+      } else if (refreshBtn) {
         e.preventDefault();
         e.stopPropagation();
         triggerReplyGeneration(true);
@@ -845,6 +1404,14 @@ function injectEchoBar() {
         e.preventDefault();
         e.stopPropagation();
         openPolishModal();
+      } else if (summaryBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        openThreadSummaryModal();
+      } else if (micBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleVoiceRecording();
       } else if (assistantBtn) {
         e.preventDefault();
         e.stopPropagation();
@@ -863,13 +1430,24 @@ function injectEchoBar() {
     }, true);
   }
 
-  // Anchor immediately before active footerNode
-  if (bar.nextElementSibling !== footerNode) {
+  // Anchor to DOM: Either custom screen coordinates or above active footerNode
+  if (isCustomPosition) {
+    bar.classList.add('echo-custom-pos');
+    const maxLeft = Math.max(10, window.innerWidth - (bar.offsetWidth || 260) - 10);
+    const maxTop = Math.max(10, window.innerHeight - (bar.offsetHeight || 44) - 10);
+    const clampedX = Math.max(10, Math.min(maxLeft, customPosX));
+    const clampedY = Math.max(10, Math.min(maxTop, customPosY));
+    bar.style.left = `${clampedX}px`;
+    bar.style.top = `${clampedY}px`;
+    if (bar.parentElement !== document.body) {
+      document.body.appendChild(bar);
+    }
+  } else if (footerNode && bar.nextElementSibling !== footerNode) {
     footerNode.parentNode?.insertBefore(bar, footerNode);
   }
 }
 
-// Render Suggestions into UI with Confidence & Explainability Tooltips
+// Render Suggestions into UI with Confidence, Explainability & Shortcut Keys
 function renderSuggestions(suggestions: any[]) {
   const container = document.getElementById('echo-suggestions');
   if (!container) return;
@@ -882,8 +1460,10 @@ function renderSuggestions(suggestions: any[]) {
     ];
   }
 
+  lastRenderedSuggestions = suggestions.map(s => typeof s === 'string' ? s : s.text);
+
   container.innerHTML = '';
-  suggestions.forEach((item) => {
+  suggestions.forEach((item, idx) => {
     const text = typeof item === 'string' ? item : item.text;
     const confidence = typeof item === 'object' ? item.confidence || 'medium' : 'medium';
     const reason = typeof item === 'object' ? item.reason || 'Smart suggestion' : 'Smart suggestion';
@@ -900,9 +1480,15 @@ function renderSuggestions(suggestions: any[]) {
     textSpan.className = 'echo-chip-text';
     textSpan.innerText = text;
 
+    // Keyboard shortcut badge
+    const kbd = document.createElement('span');
+    kbd.className = 'echo-chip-kbd';
+    kbd.innerText = `Alt+${idx + 1}`;
+
     chip.appendChild(dot);
     chip.appendChild(textSpan);
-    chip.title = `💡 [Why this suggestion?]\n${reason}\n\nClick to insert into reply.`;
+    chip.appendChild(kbd);
+    chip.title = `💡 [Why this suggestion?]\n${reason}\n\nPress Alt+${idx + 1} or Click to insert into reply.`;
 
     chip.addEventListener('click', (e) => {
       e.preventDefault();
@@ -921,6 +1507,10 @@ async function triggerReplyGeneration(force = false) {
   const contactName = extractActiveContactName();
   const conversationHistory = extractConversationContext();
 
+  if (contactName) {
+    updateActiveContactTone(contactName);
+  }
+
   const queryMessage = latestIncoming || (currentDraft ? `Regarding: ${currentDraft}` : "hey what's up?");
 
   if (queryMessage === currentIncomingMessage && !force && !isGenerating) {
@@ -933,7 +1523,7 @@ async function triggerReplyGeneration(force = false) {
   if (container) {
     container.innerHTML = `
       <span class="echo-loading">
-        <span class="echo-spinner"></span> Echoing ideas${contactName ? ` for ${contactName.split(' ')[0]}` : ''}...
+        <span class="echo-spinner"></span> Echoing [${activeTone}] ideas${contactName ? ` for ${contactName.split(' ')[0]}` : ''}...
       </span>
     `;
   }
@@ -941,6 +1531,7 @@ async function triggerReplyGeneration(force = false) {
   const response: any = await sendToBackground('SUGGEST_REPLIES', {
     incoming_message: queryMessage,
     contact_name: contactName,
+    formality: activeTone,
     conversation_history: conversationHistory,
     is_retry: force,
     current_draft: currentDraft,
@@ -957,6 +1548,153 @@ async function triggerReplyGeneration(force = false) {
       { text: 'haha awesome!', confidence: 'medium', reason: 'Context-aligned reply' }
     ]);
   }
+}
+
+// -------------------------------------------------------------
+// 5. 0-Click Keyboard Shortcuts (Alt+1/2/3, Alt+R, Alt+P, Alt+S, Tab)
+// -------------------------------------------------------------
+function setupKeyboardShortcuts() {
+  document.addEventListener('keydown', (e) => {
+    // 1. Tab to accept Ghost Autocomplete
+    if (e.key === 'Tab' && currentGhostCompletion) {
+      const activeEl = document.activeElement;
+      const isInput = activeEl && (activeEl.tagName === 'TEXTAREA' || (activeEl as HTMLElement).isContentEditable || activeEl.getAttribute('role') === 'textbox');
+      if (isInput) {
+        e.preventDefault();
+        e.stopPropagation();
+        const curr = getCurrentInputText();
+        const space = (curr.endsWith(' ') || currentGhostCompletion.startsWith(' ')) ? '' : ' ';
+        fillTextInput(curr + space + currentGhostCompletion);
+        currentGhostCompletion = '';
+        const ghostBadge = document.getElementById('echo-ghost-badge');
+        if (ghostBadge) ghostBadge.remove();
+        return;
+      }
+    }
+
+    // 2. Alt + 1, Alt + 2, Alt + 3 to accept suggestion
+    if (e.altKey && !e.ctrlKey && !e.shiftKey) {
+      if (e.key === '1' && lastRenderedSuggestions.length > 0) {
+        e.preventDefault();
+        fillTextInput(lastRenderedSuggestions[0]);
+      } else if (e.key === '2' && lastRenderedSuggestions.length > 1) {
+        e.preventDefault();
+        fillTextInput(lastRenderedSuggestions[1]);
+      } else if (e.key === '3' && lastRenderedSuggestions.length > 2) {
+        e.preventDefault();
+        fillTextInput(lastRenderedSuggestions[2]);
+      } else if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault();
+        triggerReplyGeneration(true);
+      } else if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        const draft = getCurrentInputText();
+        if (draft && draft.length > 2) {
+          // Instant in-place polish
+          sendToBackground('REFINE_VOCAB', { text: draft, action: 'fix_vocab' }).then(res => {
+            if (res?.success && res.data?.refined) {
+              fillTextInput(res.data.refined);
+            }
+          });
+        } else {
+          openPolishModal();
+        }
+      } else if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        openThreadSummaryModal();
+      } else if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        toggleFold();
+      }
+    }
+
+    // 3. Escape to close menus / modals
+    if (e.key === 'Escape') {
+      hideSlashMenu();
+      const modal = document.getElementById('echo-polish-modal');
+      if (modal) modal.style.display = 'none';
+      const sumModal = document.getElementById('echo-summary-modal');
+      if (sumModal) sumModal.style.display = 'none';
+    }
+  }, true);
+}
+
+// -------------------------------------------------------------
+// 6. Slash Commands & Ghost Autocomplete Live Listener
+// -------------------------------------------------------------
+let ghostDebounceTimer: any = null;
+
+function setupSlashAndGhostListeners() {
+  fetchActiveSnippets();
+
+  document.addEventListener('input', (e) => {
+    const target = e.target as HTMLElement;
+    const isChatInput = target && (target.tagName === 'TEXTAREA' || target.isContentEditable || target.getAttribute('role') === 'textbox');
+    if (!isChatInput) return;
+
+    const text = getCurrentInputText();
+
+    // 1. Check for slash command
+    if (text.startsWith('/')) {
+      const query = text.toLowerCase();
+      const matches = activeSnippets.filter(s => s.shortcut.toLowerCase().startsWith(query) || s.shortcut.toLowerCase().includes(query.split(' ')[0]));
+      renderSlashMenu(matches, text);
+      currentGhostCompletion = '';
+      const ghostBadge = document.getElementById('echo-ghost-badge');
+      if (ghostBadge) ghostBadge.remove();
+      return;
+    } else {
+      hideSlashMenu();
+    }
+
+    // 2. Debounced Inline Ghost Autocomplete
+    if (ghostDebounceTimer) clearTimeout(ghostDebounceTimer);
+    if (text.length >= 4 && !text.startsWith('/')) {
+      ghostDebounceTimer = setTimeout(async () => {
+        const contactName = extractActiveContactName();
+        const res = await sendToBackground('AUTOCOMPLETE_TEXT', {
+          prefix: text,
+          context: extractLatestIncomingMessage(),
+          contact_name: contactName
+        });
+
+        if (res && res.success && res.data?.completion) {
+          currentGhostCompletion = res.data.completion;
+          
+          // Render visual tab hint on the bar
+          const container = document.getElementById('echo-suggestions');
+          if (container && currentGhostCompletion) {
+            let badge = document.getElementById('echo-ghost-badge');
+            if (!badge) {
+              badge = document.createElement('div');
+              badge.id = 'echo-ghost-badge';
+              badge.className = 'echo-chip echo-conf-learning';
+              badge.style.borderStyle = 'dashed';
+              container.prepend(badge);
+            }
+            badge.innerHTML = `
+              <span class="echo-dot echo-dot-learning"></span>
+              <span class="echo-chip-text" style="color: var(--echo-text-muted); font-style: italic;">...${currentGhostCompletion}</span>
+              <span class="echo-chip-kbd" style="background: #0f172a; color: white;">Tab ⇥</span>
+            `;
+            badge.onclick = (ev) => {
+              ev.preventDefault();
+              ev.stopPropagation();
+              const curr = getCurrentInputText();
+              const space = (curr.endsWith(' ') || currentGhostCompletion.startsWith(' ')) ? '' : ' ';
+              fillTextInput(curr + space + currentGhostCompletion);
+              currentGhostCompletion = '';
+              badge?.remove();
+            };
+          }
+        }
+      }, 350);
+    } else {
+      currentGhostCompletion = '';
+      const ghostBadge = document.getElementById('echo-ghost-badge');
+      if (ghostBadge) ghostBadge.remove();
+    }
+  }, true);
 }
 
 // Sent Message Listener for Real-Time Passive Learning
@@ -1037,6 +1775,8 @@ initGlassOpacity();
 setTimeout(() => {
   try {
     injectEchoBar();
+    setupKeyboardShortcuts();
+    setupSlashAndGhostListeners();
     setupSentMessageListener();
     initObserver();
   } catch {

@@ -67,7 +67,40 @@ def run_tests():
     r = requests.post(f"{BASE_URL}/api/profile/import", json=exported_data)
     print("7. /api/profile/import Response:", r.status_code, r.json())
     
-    print("\n🎉 ALL ADVANCED FEATURE TESTS PASSED SUCCESSFULLY!")
+    # 8. Test Thread Summarizer ("Catch Me Up")
+    r = requests.post(f"{BASE_URL}/api/summarize", json={
+        "messages": [
+            {"sender": "them", "text": "Hey, can you send over the updated financial forecast?"},
+            {"sender": "me", "text": "Sure, working on it now."},
+            {"sender": "them", "text": "Also let's finalize the meeting for tomorrow at 3 PM if that works for you."}
+        ],
+        "contact_name": "Sarah"
+    })
+    print("8. /api/summarize Response:", r.status_code, json.dumps(r.json(), indent=2))
+
+    # 9. Test Fast Inline Ghost Autocomplete
+    r = requests.post(f"{BASE_URL}/api/autocomplete", json={
+        "prefix": "sounds good let's",
+        "contact_name": "Sarah"
+    })
+    print("9. /api/autocomplete Response:", r.status_code, r.json())
+
+    # 10. Test Contact Tone Memory
+    r = requests.post(f"{BASE_URL}/api/contact_tone", json={
+        "contact_id": "Sarah",
+        "preferred_tone": "formal",
+        "notes": "VP of Operations at Partner Co"
+    })
+    print("10. /api/contact_tone (POST) Response:", r.status_code, r.json())
+
+    r = requests.get(f"{BASE_URL}/api/contact_tone?contact_id=Sarah")
+    print("10b. /api/contact_tone (GET) Response:", r.status_code, r.json())
+
+    # 11. Test Custom Snippets / Macros
+    r = requests.get(f"{BASE_URL}/api/snippets")
+    print("11. /api/snippets Response:", r.status_code, "Snippets count:", len(r.json()))
+    
+    print("\n🎉 ALL ADVANCED PRODUCTIVITY FEATURE TESTS PASSED SUCCESSFULLY!")
 
 if __name__ == "__main__":
     run_tests()

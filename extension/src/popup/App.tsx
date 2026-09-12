@@ -13,7 +13,12 @@ import {
   Copy,
   Check,
   Droplets,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Command,
+  Users,
+  Keyboard,
+  Trash2,
+  Plus
 } from 'lucide-react';
 import { HealthStatus, StyleProfile } from '../types';
 
@@ -42,10 +47,22 @@ function safeSendMessage(message: any, callback?: (response: any) => void) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'polish' | 'chat' | 'quiz' | 'rewrite' | 'seed'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'polish' | 'macros' | 'contacts' | 'shortcuts' | 'chat' | 'quiz' | 'rewrite' | 'seed'>('dashboard');
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [profile, setProfile] = useState<StyleProfile | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Macros / Snippets State
+  const [snippets, setSnippets] = useState<any[]>([]);
+  const [newShortcut, setNewShortcut] = useState('');
+  const [newSnippetContent, setNewSnippetContent] = useState('');
+  const [newSnippetDesc, setNewSnippetDesc] = useState('');
+
+  // Contacts Relationship Memory State
+  const [contactsList, setContactsList] = useState<any[]>([]);
+  const [newContactId, setNewContactId] = useState('');
+  const [newContactTone, setNewContactTone] = useState('formal');
+  const [newContactNotes, setNewContactNotes] = useState('');
 
   // Dynamic Transparency Control State
   const [glassOpacity, setGlassOpacity] = useState<number>(72);
@@ -63,7 +80,7 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<{ sender: 'user' | 'bot'; text: string; explanation?: string }[]>([
     {
       sender: 'bot',
-      text: "👋 Hi! I'm Echo powered by Llama 3.2. I learn your writing style, fix paragraph mistakes, and generate smart replies. How can I help you today?"
+      text: "👋 Hi! I'm Echo, your AI communication copilot. I learn your writing style, fix paragraph mistakes, and generate smart replies. How can I help you today?"
     }
   ]);
   const [isChatting, setIsChatting] = useState(false);
@@ -116,6 +133,61 @@ export default function App() {
       }
       setLoading(false);
     });
+
+    safeSendMessage({ action: 'GET_SNIPPETS' }, (res) => {
+      if (res && res.success && Array.isArray(res.data)) {
+        setSnippets(res.data);
+      }
+    });
+
+    try {
+      if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+        chrome.storage.local.get(['contact_tones'], (res) => {
+          if (res && res.contact_tones) {
+            const list = Object.entries(res.contact_tones).map(([k, v]: [string, any]) => ({
+              contact_id: k,
+              preferred_tone: v.preferred_tone || 'casual',
+              notes: v.notes || ''
+            }));
+            setContactsList(list);
+          }
+        });
+      }
+    } catch {}
+  };
+
+  const handleAddSnippet = () => {
+    if (!newShortcut.trim() || !newSnippetContent.trim()) return;
+    let sc = newShortcut.trim().toLowerCase();
+    if (!sc.startsWith('/')) sc = '/' + sc;
+
+    safeSendMessage(
+      { action: 'SAVE_SNIPPET', payload: { shortcut: sc, content: newSnippetContent.trim(), description: newSnippetDesc.trim() } },
+      () => {
+        setNewShortcut('');
+        setNewSnippetContent('');
+        setNewSnippetDesc('');
+        fetchData();
+      }
+    );
+  };
+
+  const handleDeleteSnippet = (shortcut: string) => {
+    safeSendMessage({ action: 'DELETE_SNIPPET', payload: { shortcut } }, () => {
+      fetchData();
+    });
+  };
+
+  const handleSaveContactTone = () => {
+    if (!newContactId.trim()) return;
+    safeSendMessage(
+      { action: 'SET_CONTACT_TONE', payload: { contact_id: newContactId.trim(), preferred_tone: newContactTone, notes: newContactNotes.trim() } },
+      () => {
+        setNewContactId('');
+        setNewContactNotes('');
+        fetchData();
+      }
+    );
   };
 
   useEffect(() => {
@@ -313,7 +385,7 @@ export default function App() {
                 GlassMorphism
               </span>
             </div>
-            <p className="text-[11px] text-slate-500 font-medium">Llama 3.2 • Privacy Copilot</p>
+            <p className="text-[11px] text-slate-500 font-medium">{activeModelName.includes('(') ? activeModelName : `${activeModelName} • Privacy Copilot`}</p>
           </div>
         </div>
 
@@ -398,6 +470,9 @@ export default function App() {
         {[
           { id: 'dashboard', label: 'Profile', icon: Brain },
           { id: 'polish', label: 'Polish', icon: Wand2 },
+          { id: 'macros', label: 'Macros', icon: Command },
+          { id: 'contacts', label: 'Contacts', icon: Users },
+          { id: 'shortcuts', label: 'Hotkeys', icon: Keyboard },
           { id: 'chat', label: 'Chat', icon: Bot },
           { id: 'quiz', label: 'Quiz', icon: Sliders },
           { id: 'rewrite', label: 'Ghost', icon: Edit3 },
@@ -409,7 +484,7 @@ export default function App() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`flex-1 py-1.5 px-2.5 text-[11px] font-bold rounded-full transition-all flex items-center justify-center gap-1 whitespace-nowrap ${
+              className={`flex-1 py-1.5 px-2 text-[10.5px] font-bold rounded-full transition-all flex items-center justify-center gap-1 whitespace-nowrap ${
                 isActive
                   ? 'bg-slate-900 text-white shadow-md shadow-slate-900/20'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
@@ -424,6 +499,193 @@ export default function App() {
 
       {/* Main Tab Content */}
       <div className="flex-1 flex flex-col min-h-0">
+        {/* MACROS / SLASH COMMANDS TAB */}
+        {activeTab === 'macros' && (
+          <div className="space-y-3">
+            <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-2xl">
+              <div className="flex items-center gap-1.5 text-blue-900 font-bold text-xs">
+                <Command className="w-3.5 h-3.5 text-blue-600" />
+                <span>Quick Slash Commands & Text Expander</span>
+              </div>
+              <p className="text-[11px] text-blue-700 mt-0.5 font-medium">
+                Type <code className="bg-white/80 px-1 py-0.5 rounded font-mono text-blue-900">/</code> in any chat to trigger instant macro expansions!
+              </p>
+            </div>
+
+            {/* List of active snippets */}
+            <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+              {snippets.map((snip, idx) => (
+                <div key={idx} className="p-2.5 glass-panel rounded-xl flex items-center justify-between gap-2 shadow-sm">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-extrabold text-blue-600 font-mono bg-blue-50 px-1.5 py-0.5 rounded-md border border-blue-200">
+                        {snip.shortcut}
+                      </span>
+                      <span className="text-[11px] font-bold text-slate-800 truncate">{snip.description || 'Quick Macro'}</span>
+                    </div>
+                    <p className="text-[10.5px] text-slate-500 truncate mt-0.5">{snip.content}</p>
+                  </div>
+                  <button
+                    onClick={() => handleDeleteSnippet(snip.shortcut)}
+                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                    title="Delete Macro"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {/* Add New Snippet Form */}
+            <div className="p-3 glass-card rounded-2xl space-y-2">
+              <span className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                <Plus className="w-3.5 h-3.5 text-blue-600" /> Add Custom Slash Command
+              </span>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  placeholder="/zoom"
+                  value={newShortcut}
+                  onChange={(e) => setNewShortcut(e.target.value)}
+                  className="w-24 glass-input rounded-xl px-2.5 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-blue-500 shadow-sm"
+                />
+                <input
+                  type="text"
+                  placeholder="Description (e.g. My Zoom Link)"
+                  value={newSnippetDesc}
+                  onChange={(e) => setNewSnippetDesc(e.target.value)}
+                  className="flex-1 glass-input rounded-xl px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500 shadow-sm"
+                />
+              </div>
+              <textarea
+                placeholder="Expansion text to auto-insert..."
+                value={newSnippetContent}
+                onChange={(e) => setNewSnippetContent(e.target.value)}
+                className="w-full h-14 glass-input rounded-xl p-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 resize-none shadow-sm"
+              />
+              <button
+                onClick={handleAddSnippet}
+                disabled={!newShortcut.trim() || !newSnippetContent.trim()}
+                className="w-full py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white rounded-xl text-xs font-bold transition-all shadow-md"
+              >
+                + Save Slash Command
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* CONTACT RELATIONSHIP MEMORY TAB */}
+        {activeTab === 'contacts' && (
+          <div className="space-y-3">
+            <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl">
+              <div className="flex items-center gap-1.5 text-indigo-900 font-bold text-xs">
+                <Users className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Contact Relationship Memory</span>
+              </div>
+              <p className="text-[11px] text-indigo-700 mt-0.5 font-medium">
+                Echo automatically remembers relationship tones (e.g. Boss $\rightarrow$ Formal, Friend $\rightarrow$ Casual).
+              </p>
+            </div>
+
+            {/* List of contact preferences */}
+            <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+              {contactsList.length > 0 ? (
+                contactsList.map((c, idx) => (
+                  <div key={idx} className="p-2.5 glass-panel rounded-xl flex items-center justify-between gap-2 shadow-sm">
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-slate-900">{c.contact_id}</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full">
+                          {c.preferred_tone}
+                        </span>
+                      </div>
+                      {c.notes && <p className="text-[10.5px] text-slate-500 mt-0.5 italic">{c.notes}</p>}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="p-4 text-center text-xs text-slate-400 italic glass-panel rounded-xl">
+                  No contact tone rules set yet. As you chat or set tones on the bar, they will be saved here automatically!
+                </div>
+              )}
+            </div>
+
+            {/* Add / Override Contact Form */}
+            <div className="p-3 glass-card rounded-2xl space-y-2">
+              <span className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                <Plus className="w-3.5 h-3.5 text-indigo-600" /> Set Contact Tone Preference
+              </span>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  placeholder="Contact Name (e.g. Alex)"
+                  value={newContactId}
+                  onChange={(e) => setNewContactId(e.target.value)}
+                  className="flex-1 glass-input rounded-xl px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-500 shadow-sm"
+                />
+                <select
+                  value={newContactTone}
+                  onChange={(e) => setNewContactTone(e.target.value)}
+                  className="glass-input rounded-xl px-2 py-1.5 text-xs text-slate-900 font-bold focus:outline-none focus:border-indigo-500 shadow-sm"
+                >
+                  <option value="formal">💼 Formal</option>
+                  <option value="casual">🔥 Casual</option>
+                  <option value="concise">⚡ Concise</option>
+                  <option value="genz">😈 Gen-Z</option>
+                </select>
+              </div>
+              <input
+                type="text"
+                placeholder="Relationship Note (e.g. Client from Acme Corp)"
+                value={newContactNotes}
+                onChange={(e) => setNewContactNotes(e.target.value)}
+                className="w-full glass-input rounded-xl px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-500 shadow-sm"
+              />
+              <button
+                onClick={handleSaveContactTone}
+                disabled={!newContactId.trim()}
+                className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-indigo-600/20"
+              >
+                Save Contact Preference
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 0-CLICK HOTKEYS CHEATSHEET TAB */}
+        {activeTab === 'shortcuts' && (
+          <div className="space-y-2.5">
+            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl">
+              <div className="flex items-center gap-1.5 text-amber-900 font-bold text-xs">
+                <Keyboard className="w-3.5 h-3.5 text-amber-600" />
+                <span>0-Click Keyboard Shortcuts</span>
+              </div>
+              <p className="text-[11px] text-amber-700 mt-0.5 font-medium">
+                Speed up your messaging workflow with instant keyboard triggers.
+              </p>
+            </div>
+
+            <div className="space-y-1.5 text-xs">
+              {[
+                { key: 'Alt + 1 / 2 / 3', desc: 'Accept and insert suggestion 1, 2, or 3 instantly.' },
+                { key: 'Tab ⇥', desc: 'Accept inline ghost autocomplete sentence continuation.' },
+                { key: 'Alt + R', desc: 'Re-roll / regenerate fresh creative reply ideas.' },
+                { key: 'Alt + P', desc: 'Instant in-place Polish of typos & grammar in chat box.' },
+                { key: 'Alt + S', desc: 'Open 1-Click Thread Summarizer ("Catch Me Up").' },
+                { key: '/<macro>', desc: 'Type slash in chat box for instant macros (/cal, /loc, etc.).' },
+                { key: '🎙️ Mic Button', desc: 'Voice-to-Text with automated AI grammar polish.' },
+                { key: 'Escape', desc: 'Close any active modal, drawer, or macro popover.' },
+              ].map((s, idx) => (
+                <div key={idx} className="p-2 glass-panel rounded-xl flex items-center justify-between gap-2 shadow-sm">
+                  <span className="font-mono font-extrabold text-[11px] bg-slate-900 text-white px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap">
+                    {s.key}
+                  </span>
+                  <span className="text-[11px] font-medium text-slate-700 text-right">{s.desc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {/* POLISH DRAFT TAB */}
         {activeTab === 'polish' && (
           <div className="space-y-3">

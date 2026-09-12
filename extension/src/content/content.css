@@ -42,18 +42,83 @@
   position: relative !important;
 }
 
-/* Brand Identity */
+/* Custom Draggable Free-Floating Mode */
+#echo-ai-bar.echo-custom-pos {
+  position: fixed !important;
+  margin: 0 !important;
+  z-index: 2147483645 !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18), 0 2px 12px rgba(59, 130, 246, 0.18), var(--echo-glass-highlight) !important;
+  animation: echo-float-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+}
+
+@keyframes echo-float-in {
+  from { transform: scale(0.92); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* Folded / Minimized Compact State */
+#echo-ai-bar.echo-folded {
+  width: auto !important;
+  max-width: max-content !important;
+  padding: 4px 10px 4px 6px !important;
+  gap: 6px !important;
+  cursor: pointer !important;
+  background: rgba(255, 255, 255, 0.88) !important;
+  border: 1.5px solid rgba(59, 130, 246, 0.4) !important;
+  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.22), 0 2px 8px rgba(0, 0, 0, 0.06), var(--echo-glass-highlight) !important;
+}
+
+#echo-ai-bar.echo-folded:hover {
+  transform: translateY(-2px) scale(1.03) !important;
+  border-color: rgba(59, 130, 246, 0.8) !important;
+  box-shadow: 0 12px 30px rgba(59, 130, 246, 0.35), var(--echo-glass-highlight) !important;
+}
+
+#echo-ai-bar.echo-folded .echo-tone-cluster,
+#echo-ai-bar.echo-folded .echo-suggestions-container,
+#echo-ai-bar.echo-folded .echo-bar-tools > *:not(.echo-btn-fold):not(.echo-btn-dock) {
+  display: none !important;
+}
+
+#echo-ai-bar.echo-folded .echo-folded-label {
+  display: inline-block !important;
+  font-size: 11.5px !important;
+  font-weight: 700 !important;
+  color: var(--echo-accent-blue) !important;
+  letter-spacing: 0.2px !important;
+  margin-left: 2px !important;
+}
+
+.echo-folded-label {
+  display: none;
+}
+
+/* Brand Identity & Drag Handle */
 .echo-bar-brand {
   display: flex !important;
   align-items: center !important;
   gap: 6px !important;
-  cursor: default !important;
+  cursor: grab !important;
   user-select: none !important;
-  padding: 3px 10px 3px 4px !important;
+  padding: 3px 8px 3px 4px !important;
   background: rgba(255, 255, 255, 0.6) !important;
   border-radius: 9999px !important;
   border: 1px solid rgba(255, 255, 255, 0.9) !important;
   box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.95), 0 2px 6px rgba(0, 0, 0, 0.03) !important;
+  transition: all 0.2s ease !important;
+}
+
+.echo-bar-brand:active {
+  cursor: grabbing !important;
+  transform: scale(0.97) !important;
+}
+
+.echo-grip-icon {
+  font-size: 11px !important;
+  opacity: 0.55 !important;
+  letter-spacing: -1px !important;
+  color: var(--echo-text-muted) !important;
+  margin-left: 2px !important;
 }
 
 .echo-brand-glow {
@@ -212,6 +277,31 @@
   color: #0f172a !important;
   transform: scale(1.08) !important;
   box-shadow: inset 0 1.5px 2px #ffffff, 0 6px 16px rgba(0, 0, 0, 0.09) !important;
+}
+
+.echo-btn-fold {
+  background: rgba(239, 246, 255, 0.8) !important;
+  border-color: rgba(59, 130, 246, 0.3) !important;
+  color: #2563eb !important;
+  font-weight: 700 !important;
+}
+
+.echo-btn-fold:hover {
+  background: #2563eb !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3) !important;
+}
+
+.echo-btn-dock {
+  background: rgba(241, 245, 249, 0.8) !important;
+  border-color: rgba(100, 116, 139, 0.3) !important;
+  color: #475569 !important;
+}
+
+.echo-btn-dock:hover {
+  background: #334155 !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(51, 65, 85, 0.3) !important;
 }
 
 .echo-btn-icon svg {
@@ -814,4 +904,225 @@
 .echo-btn-send:hover {
   background: #1e293b;
   transform: translateY(-1px);
+}
+
+/* ==========================================================================
+   4. Productivity Supercharger UI Elements
+   ========================================================================== */
+
+/* Tone Switcher Pills Cluster */
+.echo-tone-cluster {
+  display: flex !important;
+  align-items: center !important;
+  gap: 3px !important;
+  background: rgba(255, 255, 255, 0.5) !important;
+  border: 1px solid var(--echo-glass-border) !important;
+  padding: 2px 4px !important;
+  border-radius: 9999px !important;
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.9) !important;
+}
+
+.echo-tone-pill {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  color: var(--echo-text-secondary) !important;
+  padding: 3px 8px !important;
+  border-radius: 9999px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+  transition: all 0.15s ease !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 3px !important;
+}
+
+.echo-tone-pill:hover {
+  background: rgba(255, 255, 255, 0.8) !important;
+  color: var(--echo-text-main) !important;
+}
+
+.echo-tone-pill.active {
+  background: #0f172a !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.25) !important;
+}
+
+/* Keyboard Shortcut Badge inside Chips */
+.echo-chip-kbd {
+  background: rgba(15, 23, 42, 0.08) !important;
+  color: var(--echo-text-muted) !important;
+  font-size: 9.5px !important;
+  font-weight: 700 !important;
+  padding: 1px 4px !important;
+  border-radius: 4px !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  margin-left: 4px !important;
+}
+
+.echo-chip:hover .echo-chip-kbd {
+  background: rgba(15, 23, 42, 0.15) !important;
+  color: #0f172a !important;
+}
+
+/* Voice-to-Text Recording Button & Pulse */
+.echo-btn-mic {
+  position: relative !important;
+}
+
+.echo-btn-mic.recording {
+  background: #ef4444 !important;
+  color: #ffffff !important;
+  border-color: #ef4444 !important;
+  animation: echoMicPulse 1.2s infinite ease-in-out !important;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.6) !important;
+}
+
+@keyframes echoMicPulse {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
+  50% { transform: scale(1.12); box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+/* Quick Slash Command Macro Popover */
+.echo-slash-menu {
+  position: absolute !important;
+  bottom: 50px !important;
+  left: 20px !important;
+  width: 320px !important;
+  max-height: 260px !important;
+  background: var(--echo-glass-card-bg) !important;
+  backdrop-filter: blur(28px) saturate(190%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
+  border: 1px solid var(--echo-glass-border) !important;
+  border-radius: 16px !important;
+  box-shadow: var(--echo-glass-highlight), 0 16px 40px rgba(0, 0, 0, 0.15) !important;
+  overflow-y: auto !important;
+  z-index: 1000000 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 6px !important;
+  animation: echoSlideUp 0.18s ease-out !important;
+}
+
+.echo-slash-header {
+  padding: 6px 10px !important;
+  font-size: 10.5px !important;
+  font-weight: 700 !important;
+  color: var(--echo-text-muted) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05) !important;
+  margin-bottom: 4px !important;
+  display: flex !important;
+  justify-content: space-between !important;
+}
+
+.echo-slash-item {
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 7px 10px !important;
+  border-radius: 10px !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+}
+
+.echo-slash-item:hover, .echo-slash-item.selected {
+  background: rgba(59, 130, 246, 0.12) !important;
+}
+
+.echo-slash-top {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+}
+
+.echo-slash-shortcut {
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  color: #2563eb !important;
+}
+
+.echo-slash-desc {
+  font-size: 10.5px !important;
+  font-weight: 600 !important;
+  color: var(--echo-text-secondary) !important;
+}
+
+.echo-slash-preview {
+  font-size: 11px !important;
+  color: var(--echo-text-muted) !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  margin-top: 2px !important;
+}
+
+/* Thread Summarizer ("Catch Me Up") Modal */
+.echo-summary-card {
+  width: 520px !important;
+}
+
+.echo-summary-body {
+  padding: 18px 20px !important;
+  max-height: 420px !important;
+  overflow-y: auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 14px !important;
+}
+
+.echo-summary-section {
+  background: rgba(255, 255, 255, 0.75) !important;
+  border: 1px solid var(--echo-glass-border) !important;
+  border-radius: 14px !important;
+  padding: 12px 14px !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03) !important;
+}
+
+.echo-summary-sec-title {
+  font-size: 11.5px !important;
+  font-weight: 800 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.4px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  margin-bottom: 6px !important;
+}
+
+.echo-summary-sec-topic .echo-summary-sec-title { color: #2563eb !important; }
+.echo-summary-sec-actions .echo-summary-sec-title { color: #d97706 !important; }
+.echo-summary-sec-decisions .echo-summary-sec-title { color: #059669 !important; }
+
+.echo-summary-text {
+  font-size: 12.5px !important;
+  line-height: 1.55 !important;
+  color: var(--echo-text-main) !important;
+  white-space: pre-wrap !important;
+}
+
+/* Ghost Autocomplete Hint Container */
+.echo-ghost-container {
+  pointer-events: none !important;
+  position: absolute !important;
+  color: rgba(100, 116, 139, 0.55) !important;
+  font-style: italic !important;
+  z-index: 1000 !important;
+  font-size: 13px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+
+.echo-ghost-tab-badge {
+  background: rgba(15, 23, 42, 0.1) !important;
+  color: #475569 !important;
+  font-size: 9.5px !important;
+  font-weight: 700 !important;
+  font-style: normal !important;
+  padding: 1px 5px !important;
+  border-radius: 4px !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
 }

@@ -19,18 +19,27 @@ EMOJI_PATTERN = re.compile(
 
 COMMON_GREETINGS = ["hey", "heyy", "yo", "sup", "hi", "hello", "gm", "gn", "hola", "wassup", "bro", "dude"]
 
-# Instant template map for sub-10ms trivial replies
+# Instant template map for sub-5ms immediate replies
 INSTANT_TEMPLATES = {
     "ok": ["sounds good!", "got it 👍", "kk cool"],
     "okay": ["sure thing", "sounds good 👍", "kk"],
-    "thanks": ["anytime!", "no problem!", "you got it 👍"],
+    "k": ["sounds good 👍", "got it", "cool cool"],
+    "thanks": ["anytime!", "no problem at all!", "you got it 👍"],
     "thank you": ["happy to help!", "no problem at all", "anytime!"],
+    "thx": ["anytime 👍", "no worries!", "you got it!"],
     "where are you": ["on my way!", "almost there!", "just heading out now"],
     "are you free": ["yeah what's up?", "busy right now, call in 10?", "free in a bit!"],
+    "you free": ["yeah what's up?", "in a bit, what's up?", "free now!"],
     "good morning": ["gm! hope you have a great day", "morning!", "gm bro ☕"],
-    "goodnight": ["gn! sleep well", "gn night!", "catch ya tomorrow"],
+    "gm": ["gm! ☕", "morning! how are you?", "gm bro"],
+    "goodnight": ["gn! sleep well", "gn night!", "catch ya tomorrow 👍"],
+    "gn": ["gn! sleep well", "night!", "catch ya tomorrow"],
     "hahaha": ["lol right?! 😂", "haha fr", "dead 💀"],
+    "haha": ["haha fr 😂", "lol literally", "haha awesome 🔥"],
     "lol": ["haha literally", "fr fr 😂", "lmao"],
+    "lmao": ["fr 💀", "literally haha 😂", "lmao so true"],
+    "sounds good": ["perfect! see ya then 👍", "awesome!", "deal! 🔥"],
+    "see you": ["see ya! 👍", "cya soon!", "take care!"]
 }
 
 def get_instant_templates(incoming: str) -> List[Dict[str, Any]]:
@@ -41,7 +50,7 @@ def get_instant_templates(incoming: str) -> List[Dict[str, Any]]:
                 {
                     "text": reply,
                     "confidence": "high",
-                    "reason": f"Instant template match for '{key}'"
+                    "reason": f"Instant brain match for '{key}'"
                 }
                 for reply in replies
             ]
@@ -124,44 +133,65 @@ def analyze_and_update_style(new_message: str = "", contact_id: str = ""):
 def build_style_persona_prompt(formality: str = "neutral", contact_name: str = "") -> str:
     profile = database.get_style_profile_db()
     total_msgs = profile.get("total_messages_learned", 0)
+    user_samples = database.get_all_user_messages(contact_id=contact_name) if contact_name else database.get_all_user_messages()
     
-    base_instructions = []
+    # Check if contact has a stored preference override
+    contact_pref = database.get_contact_preference(contact_name) if contact_name else None
+    active_tone = formality if formality and formality != "neutral" else (contact_pref.get("preferred_tone", "neutral") if contact_pref else "neutral")
+
+    base_instructions = [
+        "You are Echo — an ultra-realistic, personalized messaging AI copilot.",
+        "Your mission is to sound 100% like the user in everyday natural messaging."
+    ]
     if contact_name:
-        base_instructions.append(f"You are generating a reply to '{contact_name}'.")
+        base_instructions.append(f"Recipient: '{contact_name}'.")
+        if contact_pref and contact_pref.get("notes"):
+            base_instructions.append(f"Relationship Note: {contact_pref['notes']}.")
         
-    if formality == "casual":
-        base_instructions.append("Tone Override: Casual, warm, relaxed, informal.")
-    elif formality == "formal":
-        base_instructions.append("Tone Override: Professional, polite, clear, structured.")
+    if active_tone == "casual":
+        base_instructions.append("Tone Override: Casual, warm, relaxed conversational texting.")
+    elif active_tone == "formal":
+        base_instructions.append("Tone Override: Professional, articulate, polite, crisp business language.")
+    elif active_tone == "concise":
+        base_instructions.append("Tone Override: Ultra-concise, direct, punchy, minimal words.")
+    elif active_tone == "genz":
+        base_instructions.append("Tone Override: Gen-Z slang, modern internet speak, lowercase, expressive emojis (fr, lol, deadass, bet).")
         
-    if total_msgs == 0:
-        base_instructions.append("The user has no recorded writing history yet. Provide a natural, concise reply.")
-        return "\n".join(base_instructions)
-    
     # Sort top emojis
     emoji_counts = profile.get("emoji_counts", {})
     top_emojis = sorted(emoji_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-    top_emoji_str = " ".join([e[0] for e in top_emojis]) if top_emojis else "None"
+    top_emoji_str = " ".join([e[0] for e in top_emojis]) if top_emojis else "👍 🔥"
     
     # Sort top greetings
     greetings_counts = profile.get("greetings_counts", {})
     top_greetings = sorted(greetings_counts.items(), key=lambda x: x[1], reverse=True)[:3]
-    top_greeting_str = ", ".join([g[0] for g in top_greetings]) if top_greetings else "hey, hi"
+    top_greeting_str = ", ".join([g[0] for g in top_greetings]) if top_greetings else "hey, yo, hi"
     
-    avg_len = profile.get("avg_sentence_length", 8.0)
+    avg_len = profile.get("avg_sentence_length", 7.0)
+    if active_tone == "concise":
+        max_words = 5
+    elif active_tone == "formal":
+        max_words = 12
+    else:
+        max_words = max(4, int(avg_len))
+        
     punc = profile.get("punctuation_habits", {})
-    lowercase_pref = punc.get("lowercase_only", 0) > (total_msgs * 0.3)
+    lowercase_pref = (punc.get("lowercase_only", 0) > (max(1, total_msgs) * 0.3)) or (active_tone == "genz")
     
     prompt_lines = [
-        f"You are acting as an AI clone of the user's natural personal messaging style.",
-        f"- Target Average Sentence Length: ~{avg_len} words.",
-        f"- Preferred Greetings: {top_greeting_str}.",
-        f"- Favorite Emojis (use sparingly where appropriate): {top_emoji_str}.",
+        "User Style Rules:",
+        f"1. Brevity: Keep suggestions short and punchy (~{max_words} words max). Avoid robotic filler.",
+        f"2. Greetings: Prefers '{top_greeting_str}'.",
+        f"3. Emojis: Naturally uses {top_emoji_str} at the end of thoughts.",
+        f"4. Casing: {'Casual lowercase preferred' if (lowercase_pref and active_tone != 'formal') else 'Natural capitalization'}."
     ]
-    
-    if lowercase_pref and formality != "formal":
-        prompt_lines.append("- Style Trait: Prefers informal lowercase typing.")
-    else:
-        prompt_lines.append("- Style Trait: Standard capitalization.")
+
+    # Add few-shot sample messages if learned
+    if user_samples:
+        clean_samples = [m['content'] for m in user_samples[:5] if len(m.get('content', '')) > 2]
+        if clean_samples:
+            prompt_lines.append("Real examples of how this user naturally messages:")
+            for s in clean_samples:
+                prompt_lines.append(f' - "{s}"')
         
     return "\n".join(base_instructions + prompt_lines)

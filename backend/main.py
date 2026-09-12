@@ -67,6 +67,25 @@ class RefineRequest(BaseModel):
     text: str
     action: Optional[str] = "fix_vocab" # 'fix_vocab', 'formal', 'casual', 'concise', 'expand'
 
+class SummarizeRequest(BaseModel):
+    messages: List[ContextMessage]
+    contact_name: Optional[str] = ""
+
+class AutocompleteRequest(BaseModel):
+    prefix: str
+    context: Optional[str] = ""
+    contact_name: Optional[str] = ""
+
+class ContactToneRequest(BaseModel):
+    contact_id: str
+    preferred_tone: str = "casual"  # 'casual', 'concise', 'formal', 'genz', 'neutral'
+    notes: Optional[str] = ""
+
+class SnippetRequest(BaseModel):
+    shortcut: str
+    content: str
+    description: Optional[str] = ""
+
 @app.get("/api/health")
 def health_check():
     ollama_info = llm_client.check_ollama_health()
@@ -140,9 +159,12 @@ def suggest_replies(req: SuggestRequest):
     tier = "full"
     temperature = 0.85 if req.is_retry else 0.7
         
-    # 1. Compute query embedding and get similar past user replies
-    query_emb = llm_client.get_embedding(incoming)
-    past_replies = vector_store.find_similar_past_messages(query_emb, top_k=3, contact_id=req.contact_name) if query_emb else []
+    # 1. Compute query embedding and get similar past user replies ONLY if database has embedded messages
+    past_replies = []
+    if database.has_messages_with_embeddings(contact_id=req.contact_name):
+        query_emb = llm_client.get_embedding(incoming)
+        if query_emb:
+            past_replies = vector_store.find_similar_past_messages(query_emb, top_k=3, contact_id=req.contact_name)
     
     # 2. Get style persona prompt
     persona_system_prompt = style_engine.build_style_persona_prompt(formality=req.formality or "neutral", contact_name=req.contact_name or "")
@@ -164,26 +186,25 @@ def suggest_replies(req: SuggestRequest):
     if past_replies:
         past_examples_str = "\nExamples of how this user has replied in similar past situations:\n" + "\n".join([f"- {r}" for r in past_replies]) + "\n"
         
-    retry_instruction = "Generate 3 FRESH, distinct and creative alternate angles/ideas on what to message next." if req.is_retry else "Generate EXACTLY 3 distinct reply suggestions that sound naturally like the user."
+    retry_instruction = "Generate 3 FRESH, distinct and creative alternate angles/ideas on what to message next." if req.is_retry else "Generate EXACTLY 3 distinct reply suggestions that directly answer or react to the incoming message."
         
-    prompt = f"""
-{history_str}{draft_str}{past_examples_str}
-Latest Active Message from Contact: "{incoming}"
+    prompt = f"""{history_str}{draft_str}{past_examples_str}Incoming Message from Contact: "{incoming}"
 
 Task: {retry_instruction}
-Format output strictly as a valid JSON list of 3 strings:
+Option 1: Direct Affirmative / Confirmation / Yes (e.g. confirming attendance, time, or agreement)
+Option 2: Constructive Alternative / Reschedule / Clarification (e.g. offering an alternate time, asking details, or checking schedule)
+Option 3: Warm / Engaging follow-up (friendly reaction, enthusiastic acknowledgement, or next step)
+
+Rules:
+- Keep each reply concise and conversational (~4 to 12 words).
+- Do NOT include numbering, bullet points, or markdown explanations.
+- Output ONLY a valid JSON list of 3 strings:
 ["Option 1", "Option 2", "Option 3"]
-
-Option 1: Quick / Casual direct response
-Option 2: Thoughtful / Informative idea
-Option 3: Warm / Engaging continuation
-
-OUTPUT ONLY THE JSON ARRAY AND NOTHING ELSE:
 """
     
-    full_system = f"{persona_system_prompt}\nIMPORTANT: You are Echo, a smart context-aware messaging copilot powered by Llama 3.2. You must reply ONLY with a valid JSON array of 3 distinct string suggestions."
+    full_system = f"{persona_system_prompt}\nIMPORTANT: You are Echo, a premier high-speed automatic chat reply generator. You must reply ONLY with a valid JSON array of 3 distinct string suggestions."
     
-    raw_response = llm_client.generate_tiered_llm_response(prompt, system_prompt=full_system, tier=tier, temperature=temperature)
+    raw_response = llm_client.generate_tiered_llm_response(prompt, system_prompt=full_system, tier=tier, temperature=temperature, max_tokens=65, is_chat=False)
     
     # Clean and parse JSON response
     raw_suggestions = []
@@ -221,11 +242,15 @@ OUTPUT ONLY THE JSON ARRAY AND NOTHING ELSE:
     structured_suggestions = []
     for idx, s in enumerate(raw_suggestions[:3]):
         conf = "high" if learned_count > 10 and past_replies else ("medium" if learned_count > 3 else "learning")
-        reason = f"Llama 3.2 adapted to active chat context & {learned_count} learned messages"
+        reason = f"Echo AI adapted to active chat context & {learned_count} learned messages"
         if past_replies and idx == 0:
             reason = f"Matched similar past reply: '{past_replies[0][:30]}...'"
         elif req.is_retry and idx == 1:
             reason = "Fresh creative angle generated on retry"
+        elif idx == 0:
+            reason = "Direct affirmative response"
+        elif idx == 1:
+            reason = "Constructive alternative / coordination"
         elif idx == 2 and profile.get("top_emojis"):
             top_e = profile["top_emojis"][0]["emoji"] if isinstance(profile["top_emojis"], list) and len(profile["top_emojis"]) > 0 else "👍"
             reason = f"Warm style with favorite emoji ({top_e})"
@@ -264,7 +289,7 @@ Task: Rewrite the original draft into the target style, preserving the core mean
 
 Return ONLY the rewritten text, nothing else.
 """
-    rewritten = llm_client.generate_llm_response(prompt, system_prompt=persona_system_prompt)
+    rewritten = llm_client.generate_llm_response(prompt, system_prompt=persona_system_prompt, temperature=0.7, max_tokens=250, is_chat=False)
     return {
         "original": req.text,
         "rewritten": rewritten,
@@ -277,15 +302,15 @@ def chat_with_echo(req: ChatRequest):
         raise HTTPException(status_code=400, detail="Chat message cannot be empty")
         
     persona_system_prompt = style_engine.build_style_persona_prompt()
-    system_prompt = f"{persona_system_prompt}\nYou are Echo, an intelligent writing companion & copilot powered by Llama 3.2. Assist the user with drafting, refining text, fixing vocabulary and grammar mistakes, or generating message ideas in a helpful, friendly, natural tone."
+    system_prompt = f"{persona_system_prompt}\nYou are Echo, an intelligent writing companion and chat copilot powered by local AI. Provide helpful, accurate, concise, and context-aware responses. Answer questions directly, help draft or polish messages, and offer smart communication ideas in a natural, friendly tone."
     
     history_str = ""
     if req.history:
-        history_lines = [f"{m.sender}: {m.text}" for m in req.history[-6:]]
+        history_lines = [f"{m.sender}: {m.text}" for m in req.history[-8:]]
         history_str = "Chat History:\n" + "\n".join(history_lines) + "\n\n"
         
     prompt = f"{history_str}User: {req.message.strip()}\n\nEcho Assistant:"
-    reply = llm_client.generate_llm_response(prompt, system_prompt=system_prompt)
+    reply = llm_client.generate_llm_response(prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=350, is_chat=True)
     return {"reply": reply}
 
 @app.post("/api/refine")
@@ -307,7 +332,7 @@ def refine_vocabulary(req: RefineRequest):
         instruction = "Carefully fix all spelling mistakes, grammatical errors, and sentence structure issues. Upgrade vocabulary for natural fluency and clarity while keeping the original intent intact."
         
     persona = style_engine.build_style_persona_prompt()
-    system_prompt = f"{persona}\nYou are an expert writing and vocabulary editor powered by Llama 3.2. {instruction} Do NOT output conversational greetings or introductions."
+    system_prompt = f"{persona}\nYou are an expert writing and vocabulary editor. {instruction} Do NOT output conversational greetings or introductions."
     
     prompt = f"""Original Draft:
 \"\"\"{req.text.strip()}\"\"\"
@@ -319,7 +344,7 @@ REFINED:
 EXPLANATION:
 <Write a 1-sentence brief summary of the key corrections made>
 """
-    raw_res = llm_client.generate_llm_response(prompt, system_prompt=system_prompt, temperature=0.3)
+    raw_res = llm_client.generate_llm_response(prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=300, is_chat=False)
     
     refined_text = raw_res
     explanation = "Fixed grammar, spelling typos & polished vocabulary."
@@ -414,6 +439,114 @@ def import_profile(data: Dict[str, Any]):
 def reset_profile():
     database.clear_db()
     return {"status": "success", "message": "All learned style profile data cleared."}
+
+# -----------------------------------------------------------------
+# 1. Thread Summarizer ("Catch Me Up")
+# -----------------------------------------------------------------
+@app.post("/api/summarize")
+def summarize_thread(req: SummarizeRequest):
+    if not req.messages or len(req.messages) == 0:
+        raise HTTPException(status_code=400, detail="No messages provided for summarization")
+        
+    conversation_lines = []
+    for m in req.messages[-30:]:
+        sender_label = "Contact" if m.sender in ["them", "contact", "incoming"] else "You"
+        conversation_lines.append(f"{sender_label}: {m.text}")
+    full_thread = "\n".join(conversation_lines)
+    
+    system_prompt = "You are Echo — an ultra-intelligent messaging analyst. Summarize conversation threads clearly, crisply, and accurately. Focus on actionable insights, responsibilities, and decisions."
+    
+    prompt = f"""Conversation Thread to Summarize:
+\"\"\"
+{full_thread}
+\"\"\"
+
+Task: Provide an executive 3-section summary formatted with exact bullet points:
+TOPIC:
+• <1-2 bullet points explaining the core discussion and context>
+
+ACTIONS & QUESTIONS FOR YOU:
+• <1-2 bullet points listing specific questions asked to 'You' or tasks pending your response (or 'None' if none)>
+
+DECISIONS & NEXT STEPS:
+• <1-2 bullet points summarizing agreements, dates, times, or next actions>
+"""
+    raw_res = llm_client.generate_llm_response(prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=250, is_chat=False)
+    
+    return {
+        "summary": raw_res.strip(),
+        "total_messages_analyzed": len(req.messages),
+        "contact_name": req.contact_name or ""
+    }
+
+# -----------------------------------------------------------------
+# 2. Fast Inline Ghost Autocomplete
+# -----------------------------------------------------------------
+@app.post("/api/autocomplete")
+def inline_autocomplete(req: AutocompleteRequest):
+    prefix = req.prefix.strip()
+    if not prefix or len(prefix) < 2:
+        return {"completion": ""}
+        
+    persona_system = style_engine.build_style_persona_prompt(contact_name=req.contact_name or "")
+    system_prompt = f"{persona_system}\nYou are an inline ghost text autocompletion engine. Predict ONLY the immediate remaining continuation of the user's unfinished sentence in 3 to 8 words. Do NOT repeat what the user already typed. Return ONLY the continuation text."
+    
+    context_str = f"Chat Context:\n{req.context.strip()}\n\n" if req.context else ""
+    prompt = f"{context_str}The user has currently typed: \"{prefix}\"\n\nContinuation:"
+    
+    continuation = llm_client.generate_llm_response(prompt, system_prompt=system_prompt, temperature=0.4, max_tokens=30, is_chat=False)
+    cleaned = continuation.strip().strip('"\'').lstrip(prefix).strip()
+    
+    return {
+        "prefix": prefix,
+        "completion": cleaned
+    }
+
+# -----------------------------------------------------------------
+# 3. Contact Tone Memory & Relationship Preferences
+# -----------------------------------------------------------------
+@app.get("/api/contact_tone")
+def get_contact_tone(contact_id: str):
+    pref = database.get_contact_preference(contact_id)
+    if pref:
+        return pref
+    return {
+        "contact_id": contact_id,
+        "preferred_tone": "casual",
+        "notes": "",
+        "updated_at": ""
+    }
+
+@app.post("/api/contact_tone")
+def set_contact_tone(req: ContactToneRequest):
+    database.save_contact_preference(req.contact_id, req.preferred_tone, req.notes or "")
+    return {
+        "status": "success",
+        "contact_id": req.contact_id,
+        "preferred_tone": req.preferred_tone,
+        "notes": req.notes or ""
+    }
+
+@app.get("/api/contacts")
+def list_contacts():
+    return database.get_all_contact_preferences()
+
+# -----------------------------------------------------------------
+# 4. Snippets & Slash Command Macros
+# -----------------------------------------------------------------
+@app.get("/api/snippets")
+def list_snippets():
+    return database.get_snippets()
+
+@app.post("/api/snippets")
+def add_snippet(req: SnippetRequest):
+    database.save_snippet(req.shortcut, req.content, req.description or "")
+    return {"status": "success", "shortcut": req.shortcut}
+
+@app.delete("/api/snippets")
+def remove_snippet(shortcut: str):
+    database.delete_snippet(shortcut)
+    return {"status": "success", "shortcut": shortcut}
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=settings.PORT, reload=True)
